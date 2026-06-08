@@ -1,10 +1,9 @@
 @echo off
 echo TBH Fiyat Bakici derleniyor...
 pip install pyinstaller >nul 2>&1
-pyinstaller --onefile --windowed --name "TBHFiyat" ^
+pyinstaller --onedir --windowed --name "TBHFiyat" ^
     --hidden-import=win32api ^
     --hidden-import=win32gui ^
-    --hidden-import=keyboard ^
     --version-file=version_info.txt ^
     fiyat_bak.py
 echo.

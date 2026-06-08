@@ -7,8 +7,7 @@ import requests, os, json, time, webbrowser
 import tkinter as tk
 from tkinter import ttk
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import keyboard
+import ctypes, ctypes.wintypes
 import win32api
 
 APP_ID       = 3678970
@@ -663,17 +662,28 @@ def init():
     status(t("ready"))
     if _root: _root.after(0, show_ready)
 
-# ── Hotkey ────────────────────────────────────
-def on_f10():
-    if _root:
-        _root.after(0, open_search)
+# ── Hotkey (ctypes RegisterHotKey — keyboard lib yok) ──────────
+HOTKEY_ID = 1
+VK_F10    = 0x79
+WM_HOTKEY = 0x0312
+
+def _hotkey_thread():
+    user32 = ctypes.windll.user32
+    user32.RegisterHotKey(None, HOTKEY_ID, 0, VK_F10)
+    msg = ctypes.wintypes.MSG()
+    while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
+        if msg.message == WM_HOTKEY and msg.wParam == HOTKEY_ID:
+            if _root:
+                _root.after(0, open_search)
+        user32.TranslateMessage(ctypes.byref(msg))
+        user32.DispatchMessageW(ctypes.byref(msg))
 
 # ── Baslat ─────────────────────────────────────
 def main():
     root = build_window()
     root.update()
     threading.Thread(target=init, daemon=True).start()
-    keyboard.add_hotkey("F10", on_f10, suppress=False)
+    threading.Thread(target=_hotkey_thread, daemon=True).start()
     root.mainloop()
 
 if __name__ == "__main__":
