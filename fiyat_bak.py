@@ -15,6 +15,69 @@ APP_ID       = 3678970
 VERSION      = "1.0.0"
 GITHUB_REPO  = "sniper007camesbond/TBHFiyat"
 import sys
+
+_lang = ["tr"]
+
+LANG = {
+    "tr": {
+        "win_title":    "TBH FIYAT BAKICI",
+        "starting":     "Baslatiliyor...",
+        "ready":        "Hazir!",
+        "search_btn":   "FIYAT ARA",
+        "or_f10":       "veya F10",
+        "refresh_btn":  "Fiyatlari Guncelle",
+        "update_btn":   "Guncelle",
+        "close_btn":    "Kapat",
+        "lang_btn":     "EN",
+        "popup_title":  "TBH FIYAT ARA",
+        "no_match":     "Eslesme bulunamadi",
+        "listings":     "satista",
+        "variant":      "varyant",
+        "chk_update":   "Guncelleme kontrol ediliyor...",
+        "up_to_date":   "Zaten guncel! (v{v})",
+        "new_ver":      "Yeni surum: v{v} — indiriliyor...",
+        "dl_error":     "Indirme hatasi: {e}",
+        "fetching":     "Steam'den veriler cekiliyor {n}/{total}",
+        "saved":        "{n} item kaydedildi.",
+        "cache_ok":     "Cache'den {n} item yuklendi.",
+        "arsiv_ok":     "Arsivden {n} item yuklendi.",
+        "rate_limit":   "Steam rate limit, {w}s bekleniyor...",
+        "steam_err":    "Steam hatasi: {e} — arsiv kullaniliyor.",
+        "steam_fail":   "Steam'e erisilemedi — arsiv kullaniliyor.",
+        "fetching1":    "Steam'den fiyatlar cekiliyor (1. sayfa)...",
+    },
+    "en": {
+        "win_title":    "TBH PRICE CHECKER",
+        "starting":     "Starting...",
+        "ready":        "Ready!",
+        "search_btn":   "SEARCH PRICE",
+        "or_f10":       "or F10",
+        "refresh_btn":  "Refresh Prices",
+        "update_btn":   "Update",
+        "close_btn":    "Close",
+        "lang_btn":     "TR",
+        "popup_title":  "TBH PRICE SEARCH",
+        "no_match":     "No results found",
+        "listings":     "listed",
+        "variant":      "variant",
+        "chk_update":   "Checking for updates...",
+        "up_to_date":   "Up to date! (v{v})",
+        "new_ver":      "New version: v{v} — downloading...",
+        "dl_error":     "Download error: {e}",
+        "fetching":     "Fetching from Steam {n}/{total}",
+        "saved":        "{n} items saved.",
+        "cache_ok":     "Loaded {n} items from cache.",
+        "arsiv_ok":     "Loaded {n} items from archive.",
+        "rate_limit":   "Steam rate limit, waiting {w}s...",
+        "steam_err":    "Steam error: {e} — using archive.",
+        "steam_fail":   "Steam unavailable — using archive.",
+        "fetching1":    "Fetching prices from Steam (page 1)...",
+    },
+}
+
+def t(key, **kw):
+    s = LANG[_lang[0]].get(key, key)
+    return s.format(**kw) if kw else s
 BASE_DIR  = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(BASE_DIR, "market_fiyat.json")
 HEADERS   = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -78,7 +141,7 @@ def _fetch_page(start, retries=3):
             )
             if r.status_code == 429:
                 wait = 8 * (attempt + 1)
-                status(f"Steam rate limit, {wait}s bekleniyor...")
+                status(t("rate_limit", w=wait))
                 time.sleep(wait)
                 continue
             data = r.json()
@@ -114,17 +177,17 @@ def _load_arsiv():
 
 def fetch_market():
     """Steam'den güncel fiyat çek — sıralı, 1.2s bekleme, ban riski yok."""
-    status("Steam'den fiyatlar cekiliyor (1. sayfa)...")
+    status(t("fetching1"))
     set_progress(-1)
 
     try:
         first, total = _fetch_page(0)
     except Exception as e:
-        status(f"Steam hatasi: {e} — arsiv kullaniliyor.")
+        status(t("steam_err", e=e))
         return _load_arsiv() or {}
 
     if not first:
-        status("Steam'e erisilemedi — arsiv kullaniliyor.")
+        status(t("steam_fail"))
         return _load_arsiv() or {}
 
     page_size = len(first)
@@ -136,7 +199,7 @@ def fetch_market():
         time.sleep(0.3)
         items, _ = _fetch_page(off)
         all_items.extend(items)
-        status(f"Steam'den veriler cekiliyor {i+2}/{total_pg}")
+        status(t("fetching", n=i+2, total=total_pg))
 
     grouped = {}
     for it in all_items:
@@ -147,7 +210,7 @@ def fetch_market():
     set_progress(0, 1)
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump({"updated": time.time(), "grouped": grouped}, f, ensure_ascii=False)
-    status(f"{len(grouped)} item kaydedildi.")
+    status(t("saved", n=len(grouped)))
     return grouped
 
 def load_market():
@@ -157,13 +220,13 @@ def load_market():
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             c = json.load(f)
         if time.time() - c.get("updated", 0) < CACHE_TTL:
-            status(f"Cache'den {len(c['grouped'])} item yuklendi.")
+            status(t("cache_ok", n=len(c["grouped"])))
             return c["grouped"]
 
     # 2) market_arsiv.json var mı?
     g = _load_arsiv()
     if g:
-        status(f"Arsivden {len(g)} item yuklendi.")
+        status(t("arsiv_ok", n=len(g)))
         # cache olarak da kaydet
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump({"updated": time.time(), "grouped": g}, f, ensure_ascii=False)
@@ -237,7 +300,7 @@ def open_search():
     # Baslik + kapat + sürükleme
     top = tk.Frame(inner, bg=R["panel"], padx=8, pady=6, cursor="fleur")
     top.pack(fill="x")
-    title_lbl = tk.Label(top, text="TBH FIYAT ARA", bg=R["panel"], fg=R["baslik"],
+    title_lbl = tk.Label(top, text=t("popup_title"), bg=R["panel"], fg=R["baslik"],
                          font=("Segoe UI", 9, "bold"), cursor="fleur")
     title_lbl.pack(side="left")
     tk.Button(top, text="✕", bg=R["panel"], fg=R["kirmizi"],
@@ -350,18 +413,16 @@ def open_search():
             tk.Label(left, text=name, bg=R["bg"], fg=_rarity_fg(variants),
                      font=("Segoe UI", 9, "bold"), anchor="w").pack(fill="x")
 
-            info = f"{listings:,} satista"
+            info = f"{listings:,} {t('listings')}"
             if n_var > 1:
-                info += f"  •  {n_var} varyant"
+                info += f"  •  {n_var} {t('variant')}"
             tk.Label(left, text=info, bg=R["bg"], fg=R["muted"],
                      font=("Segoe UI", 7), anchor="w").pack(fill="x")
 
-            if n_var == 1:
-                price_str = variants[0].get("price_text", fmt_price(p_min))
-            elif p_min == p_max:
-                price_str = fmt_price(p_min)
-            else:
-                price_str = f"{fmt_price(p_min)} ~ {fmt_price(p_max)}"
+            sv = sorted(variants, key=lambda x: x.get("price", 0))
+            pt_min = sv[0].get("price_text") or fmt_price(p_min)
+            pt_max = sv[-1].get("price_text") or fmt_price(p_max)
+            price_str = pt_min if pt_min == pt_max else f"{pt_min} ~ {pt_max}"
 
             price_lbl = tk.Label(row, text=price_str, bg=R["bg"], fg=R["yesil"],
                                  font=("Segoe UI", 10, "bold"), padx=8)
@@ -381,7 +442,7 @@ def open_search():
             sep.pack(fill="x")
 
         if shown == 0 and q:
-            tk.Label(rf, text="Eslesme bulunamadi", bg=R["bg"],
+            tk.Label(rf, text=t("no_match"), bg=R["bg"],
                      fg=R["muted"], font=("Segoe UI", 9), pady=10).pack()
 
         # Scrollbar guncelle
@@ -449,7 +510,7 @@ def check_update():
 
 def do_update(download_url, new_ver):
     import tempfile, subprocess
-    status(f"v{new_ver} indiriliyor...")
+    status(t("new_ver", v=new_ver))
     tmp_exe = os.path.join(tempfile.gettempdir(), "TBHFiyat_new.exe")
     try:
         resp = requests.get(download_url, stream=True, timeout=120,
@@ -458,7 +519,7 @@ def do_update(download_url, new_ver):
             for chunk in resp.iter_content(65536):
                 f.write(chunk)
     except Exception as e:
-        status(f"Indirme hatasi: {e}")
+        status(t("dl_error", e=e))
         return
     current_exe = sys.executable if getattr(sys, "frozen", False) else os.path.abspath(sys.argv[0])
     bat = os.path.join(tempfile.gettempdir(), "tbh_update.bat")
@@ -472,13 +533,16 @@ def do_update(download_url, new_ver):
     _root.quit()
 
 def run_update_check():
-    status("Guncelleme kontrol ediliyor...")
+    if _ready_frame:   _ready_frame.pack_forget()
+    if _loading_frame: _loading_frame.pack(fill="x", padx=20, pady=(0, 12))
+    if _root:          _root.geometry("340x155")
+    status(t("chk_update"))
     result = check_update()
     if result is None:
-        status(f"Zaten guncel! (v{VERSION})")
+        status(t("up_to_date", v=VERSION))
+        if _root: _root.after(1500, show_ready)
         return
     new_ver, url = result
-    status(f"Yeni surum bulundu: v{new_ver} — indiriliyor...")
     if _root:
         _root.after(0, lambda: do_update(url, new_ver))
 
@@ -486,6 +550,13 @@ _root          = None
 _ready_frame   = None
 _loading_frame = None
 _grouped       = {}
+_ui            = {}   # widget refs for live lang update
+
+def toggle_lang():
+    _lang[0] = "en" if _lang[0] == "tr" else "tr"
+    for key, widget in _ui.items():
+        try: widget.config(text=t(key))
+        except: pass
 
 def build_window():
     global _root, _status_label, _progress_bar, _ready_frame, _loading_frame
@@ -495,15 +566,25 @@ def build_window():
     root.resizable(False, False)
     root.attributes("-topmost", True)
 
-    tk.Label(root, text="TBH FIYAT BAKICI", bg=R["bg"], fg=R["baslik"],
-             font=("Segoe UI", 12, "bold"), padx=20, pady=10).pack(fill="x")
+    # Başlık satırı + dil butonu
+    hdr = tk.Frame(root, bg=R["bg"])
+    hdr.pack(fill="x")
+    win_lbl = tk.Label(hdr, text=t("win_title"), bg=R["bg"], fg=R["baslik"],
+                       font=("Segoe UI", 12, "bold"), padx=20, pady=10)
+    win_lbl.pack(side="left")
+    _ui["win_title"] = win_lbl
+    lang_btn = tk.Button(hdr, text=t("lang_btn"), bg=R["btn"], fg=R["muted"],
+                         font=("Segoe UI", 8), relief="flat", padx=6, pady=2,
+                         cursor="hand2", command=toggle_lang)
+    lang_btn.pack(side="right", padx=10, pady=10)
+    _ui["lang_btn"] = lang_btn
 
     # Loading frame
     lf = tk.Frame(root, bg=R["bg"])
     lf.pack(fill="x", padx=20, pady=(0, 12))
     _loading_frame = lf
 
-    lbl = tk.Label(lf, text="Baslatiliyor...", bg=R["bg"], fg=R["text"],
+    lbl = tk.Label(lf, text=t("starting"), bg=R["bg"], fg=R["text"],
                    font=("Segoe UI", 9), anchor="w", wraplength=300)
     lbl.pack(fill="x", pady=(0, 6))
     _status_label = lbl
@@ -523,30 +604,40 @@ def build_window():
     rf = tk.Frame(root, bg=R["bg"])
     _ready_frame = rf
 
-    tk.Button(rf, text="FIYAT ARA", bg=R["yesil"], fg=R["bg"],
-              font=("Segoe UI", 12, "bold"), relief="flat", padx=16, pady=6,
-              cursor="hand2",
-              command=lambda: _root.after(0, open_search)).pack(pady=(8, 4))
+    search_btn = tk.Button(rf, text=t("search_btn"), bg=R["yesil"], fg=R["bg"],
+                           font=("Segoe UI", 12, "bold"), relief="flat", padx=16, pady=6,
+                           cursor="hand2",
+                           command=lambda: _root.after(0, open_search))
+    search_btn.pack(pady=(8, 4))
+    _ui["search_btn"] = search_btn
 
-    tk.Label(rf, text="veya F10", bg=R["bg"], fg=R["muted"],
-             font=("Segoe UI", 8)).pack()
+    or_lbl = tk.Label(rf, text=t("or_f10"), bg=R["bg"], fg=R["muted"],
+                      font=("Segoe UI", 8))
+    or_lbl.pack()
+    _ui["or_f10"] = or_lbl
 
     btn_frame = tk.Frame(rf, bg=R["bg"])
     btn_frame.pack(pady=(6, 10))
-    tk.Button(btn_frame, text="Fiyatlari Guncelle", bg=R["btn"], fg=R["text"],
-              relief="flat", font=("Segoe UI", 10), padx=14, pady=5,
-              cursor="hand2",
-              command=lambda: threading.Thread(target=refresh, daemon=True).start()
-              ).pack(side="left", padx=4)
-    tk.Button(btn_frame, text="Guncelle", bg=R["btn"], fg=R["baslik"],
-              relief="flat", font=("Segoe UI", 10), padx=14, pady=5,
-              cursor="hand2",
-              command=lambda: threading.Thread(target=run_update_check, daemon=True).start()
-              ).pack(side="left", padx=4)
-    tk.Button(btn_frame, text="Kapat", bg=R["btn"], fg=R["kirmizi"],
-              relief="flat", font=("Segoe UI", 10), padx=14, pady=5,
-              cursor="hand2",
-              command=root.quit).pack(side="left", padx=4)
+
+    refresh_btn = tk.Button(btn_frame, text=t("refresh_btn"), bg=R["btn"], fg=R["text"],
+                            relief="flat", font=("Segoe UI", 10), padx=14, pady=5,
+                            cursor="hand2",
+                            command=lambda: threading.Thread(target=refresh, daemon=True).start())
+    refresh_btn.pack(side="left", padx=4)
+    _ui["refresh_btn"] = refresh_btn
+
+    upd_btn = tk.Button(btn_frame, text=t("update_btn"), bg=R["btn"], fg=R["baslik"],
+                        relief="flat", font=("Segoe UI", 10), padx=14, pady=5,
+                        cursor="hand2",
+                        command=lambda: threading.Thread(target=run_update_check, daemon=True).start())
+    upd_btn.pack(side="left", padx=4)
+    _ui["update_btn"] = upd_btn
+
+    close_btn = tk.Button(btn_frame, text=t("close_btn"), bg=R["btn"], fg=R["kirmizi"],
+                          relief="flat", font=("Segoe UI", 10), padx=14, pady=5,
+                          cursor="hand2", command=root.quit)
+    close_btn.pack(side="left", padx=4)
+    _ui["close_btn"] = close_btn
 
     root.geometry("340x170")
     _root = root
@@ -563,13 +654,13 @@ def refresh():
     if _loading_frame: _loading_frame.pack(fill="x", padx=20, pady=(0, 12))
     if _root:          _root.geometry("340x155")
     _grouped = fetch_market()
-    status("Hazir!")
+    status(t("ready"))
     if _root: _root.after(0, show_ready)
 
 def init():
     global _grouped
     _grouped = load_market()
-    status("Hazir!")
+    status(t("ready"))
     if _root: _root.after(0, show_ready)
 
 # ── Hotkey ────────────────────────────────────

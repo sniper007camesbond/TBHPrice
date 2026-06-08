@@ -5,6 +5,7 @@ pyinstaller --onefile --windowed --name "TBHFiyat" ^
     --hidden-import=win32api ^
     --hidden-import=win32gui ^
     --hidden-import=keyboard ^
+    --version-file=version_info.txt ^
     fiyat_bak.py
 echo.
 echo EXE olusturuldu: dist\TBHFiyat.exe
