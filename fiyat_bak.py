@@ -11,7 +11,7 @@ import ctypes, ctypes.wintypes
 import win32api
 
 APP_ID       = 3678970
-VERSION      = "1.2.0"
+VERSION      = "1.3.0"
 GITHUB_REPO  = "sniper007camesbond/TBHFiyat"
 import sys
 
@@ -34,7 +34,7 @@ LANG = {
         "variant":      "varyant",
         "chk_update":   "Guncelleme kontrol ediliyor...",
         "up_to_date":   "Zaten guncel! (v{v})",
-        "new_ver":      "Yeni surum: v{v} — indiriliyor...",
+        "new_ver":      "Yeni surum bulundu: v{v} — indirme sayfasi aciliyor...",
         "dl_error":     "Indirme hatasi: {e}",
         "fetching":     "Steam'den veriler cekiliyor {n}/{total}",
         "saved":        "{n} item kaydedildi.",
@@ -61,7 +61,7 @@ LANG = {
         "variant":      "variant",
         "chk_update":   "Checking for updates...",
         "up_to_date":   "Up to date! (v{v})",
-        "new_ver":      "New version: v{v} — downloading...",
+        "new_ver":      "New version found: v{v} — opening download page...",
         "dl_error":     "Download error: {e}",
         "fetching":     "Fetching from Steam {n}/{total}",
         "saved":        "{n} items saved.",
@@ -507,30 +507,6 @@ def check_update():
     except Exception:
         return None
 
-def do_update(download_url, new_ver):
-    import tempfile, subprocess
-    status(t("new_ver", v=new_ver))
-    tmp_exe = os.path.join(tempfile.gettempdir(), "TBHFiyat_new.exe")
-    try:
-        resp = requests.get(download_url, stream=True, timeout=120,
-                            headers={"User-Agent": "TBHFiyat"})
-        with open(tmp_exe, "wb") as f:
-            for chunk in resp.iter_content(65536):
-                f.write(chunk)
-    except Exception as e:
-        status(t("dl_error", e=e))
-        return
-    current_exe = sys.executable if getattr(sys, "frozen", False) else os.path.abspath(sys.argv[0])
-    bat = os.path.join(tempfile.gettempdir(), "tbh_update.bat")
-    with open(bat, "w", encoding="utf-8") as f:
-        f.write("@echo off\n")
-        f.write("ping 127.0.0.1 -n 3 > nul\n")
-        f.write(f'copy /Y "{tmp_exe}" "{current_exe}"\n')
-        f.write(f'start "" "{current_exe}"\n')
-        f.write('del "%~0"\n')
-    subprocess.Popen(["cmd", "/c", bat], creationflags=0x08000000)
-    _root.quit()
-
 def run_update_check():
     if _ready_frame:   _ready_frame.pack_forget()
     if _loading_frame: _loading_frame.pack(fill="x", padx=20, pady=(0, 12))
@@ -541,9 +517,10 @@ def run_update_check():
         status(t("up_to_date", v=VERSION))
         if _root: _root.after(1500, show_ready)
         return
-    new_ver, url = result
-    if _root:
-        _root.after(0, lambda: do_update(url, new_ver))
+    new_ver, _ = result
+    status(t("new_ver", v=new_ver))
+    webbrowser.open(f"https://github.com/{GITHUB_REPO}/releases/latest")
+    if _root: _root.after(2000, show_ready)
 
 _root          = None
 _ready_frame   = None
