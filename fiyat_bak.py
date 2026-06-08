@@ -11,7 +11,7 @@ import ctypes, ctypes.wintypes
 import win32api
 
 APP_ID       = 3678970
-VERSION      = "1.1.0"
+VERSION      = "1.2.0"
 GITHUB_REPO  = "sniper007camesbond/TBHFiyat"
 import sys
 
