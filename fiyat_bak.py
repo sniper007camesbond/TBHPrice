@@ -20,7 +20,7 @@ def _get_screen_size():
     return _user32.GetSystemMetrics(0), _user32.GetSystemMetrics(1)
 
 APP_ID       = 3678970
-VERSION      = "1.4.0"
+VERSION      = "1.4.1"
 GITHUB_REPO  = "sniper007camesbond/TBHFiyat"
 import sys
 
