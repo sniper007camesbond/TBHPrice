@@ -8,10 +8,19 @@ import tkinter as tk
 from tkinter import ttk
 import threading
 import ctypes, ctypes.wintypes
-import win32api
+
+_user32 = ctypes.windll.user32
+
+def _get_cursor_pos():
+    pt = ctypes.wintypes.POINT()
+    _user32.GetCursorPos(ctypes.byref(pt))
+    return pt.x, pt.y
+
+def _get_screen_size():
+    return _user32.GetSystemMetrics(0), _user32.GetSystemMetrics(1)
 
 APP_ID       = 3678970
-VERSION      = "1.3.0"
+VERSION      = "1.4.0"
 GITHUB_REPO  = "sniper007camesbond/TBHFiyat"
 import sys
 
@@ -285,7 +294,7 @@ def open_search():
             return
         except: pass
 
-    cx, cy = win32api.GetCursorPos()
+    cx, cy = _get_cursor_pos()
     sw = tk.Toplevel(_root)
     sw.title("")
     sw.overrideredirect(True)
@@ -467,8 +476,7 @@ def open_search():
     # Konumlama
     sw.update_idletasks()
     pw, ph = sw.winfo_reqwidth(), sw.winfo_reqheight()
-    sx = win32api.GetSystemMetrics(0)
-    sy = win32api.GetSystemMetrics(1)
+    sx, sy = _get_screen_size()
     wx = min(cx + 10, sx - pw - 10)
     wy = min(cy + 10, sy - ph - 10)
     sw.geometry(f"{pw}x{ph}+{wx}+{wy}")
