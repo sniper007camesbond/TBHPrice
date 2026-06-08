@@ -12,7 +12,7 @@ import keyboard
 import win32api
 
 APP_ID       = 3678970
-VERSION      = "1.0.0"
+VERSION      = "1.1.0"
 GITHUB_REPO  = "sniper007camesbond/TBHFiyat"
 import sys
 
