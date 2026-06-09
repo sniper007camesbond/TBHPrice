@@ -44,6 +44,8 @@ LANG = {
         "no_match":     "Eslesme bulunamadi",
         "listings":     "satista",
         "variant":      "varyant",
+        "tab_guncel":   "Guncel Fiyatlar",
+        "tab_arsiv":    "Arsiv Fiyatlari",
         "chk_update":   "Guncelleme kontrol ediliyor...",
         "up_to_date":   "Zaten guncel! (v{v})",
         "new_ver":      "Yeni surum bulundu: v{v} — indirme sayfasi aciliyor...",
@@ -71,6 +73,8 @@ LANG = {
         "no_match":     "No results found",
         "listings":     "listed",
         "variant":      "variant",
+        "tab_guncel":   "Current Prices",
+        "tab_arsiv":    "Archive Prices",
         "chk_update":   "Checking for updates...",
         "up_to_date":   "Up to date! (v{v})",
         "new_ver":      "New version found: v{v} — opening download page...",
@@ -438,6 +442,35 @@ def open_search():
     entry.pack(fill="x", ipady=5, padx=2)
     entry.focus_set()
 
+    # Kaynak seçici tab butonları
+    _src = ["guncel"]   # "guncel" veya "arsiv"
+    tab_frame = tk.Frame(inner, bg=R["bg"], padx=8)
+    tab_frame.pack(fill="x", pady=(0, 4))
+
+    def _make_tab(key, src_val):
+        def _cmd():
+            _src[0] = src_val
+            _refresh_tabs()
+            build_results(entry.get())
+        btn = tk.Button(tab_frame, text=t(key), relief="flat", bd=0,
+                        font=("Segoe UI", 8, "bold"), padx=10, pady=3,
+                        cursor="hand2", command=_cmd)
+        return btn
+
+    btn_guncel = _make_tab("tab_guncel", "guncel")
+    btn_arsiv  = _make_tab("tab_arsiv",  "arsiv")
+    btn_guncel.pack(side="left", padx=(0, 2))
+    btn_arsiv.pack(side="left")
+
+    def _refresh_tabs():
+        if _src[0] == "guncel":
+            btn_guncel.config(bg=R["yesil"],  fg=R["bg"])
+            btn_arsiv.config( bg=R["panel"],  fg=R["muted"])
+        else:
+            btn_guncel.config(bg=R["panel"],  fg=R["muted"])
+            btn_arsiv.config( bg=R["yesil"],  fg=R["bg"])
+    _refresh_tabs()
+
     # Sonuc listesi — Canvas tabanlı (hızlı), yeniden boyutlandırılabilir
     BASE_W  = 380
     ROW_H_B = 54
@@ -510,8 +543,9 @@ def open_search():
         fn_price = ("Segoe UI", max(10, int(10 * sc)), "bold")
 
         q_low    = q.lower()
+        src_list = _sorted_items if _src[0] == "guncel" else _sorted_items_arsiv
         filtered = []
-        for name, variants in _sorted_items:
+        for name, variants in src_list:
             if q_low and q_low not in name.lower(): continue
             filtered.append((name, variants))
             if len(filtered) >= 60: break
@@ -632,16 +666,25 @@ def check_update():
 def run_update_check():
     webbrowser.open(f"https://github.com/{GITHUB_REPO}/releases/latest")
 
-_root          = None
-_ready_frame   = None
-_loading_frame = None
-_grouped       = {}
-_sorted_items  = []   # pre-sorted list of (name, variants)
-_ui            = {}   # widget refs for live lang update
+_root               = None
+_ready_frame        = None
+_loading_frame      = None
+_grouped            = {}
+_sorted_items       = []
+_grouped_arsiv      = {}
+_sorted_items_arsiv = []
+_ui                 = {}
 
 def _presort():
     global _sorted_items
     _sorted_items = sorted(_grouped.items())
+
+def _presort_arsiv():
+    global _sorted_items_arsiv
+    _grouped_arsiv.clear()
+    g = _load_arsiv() or {}
+    _grouped_arsiv.update(g)
+    _sorted_items_arsiv[:] = sorted(_grouped_arsiv.items())
 
 def toggle_lang():
     _lang[0] = "en" if _lang[0] == "tr" else "tr"
@@ -746,6 +789,7 @@ def refresh():
     if _root:          _root.geometry("340x155")
     _grouped = fetch_market()
     _presort()
+    _presort_arsiv()
     status(t("ready"))
     if _root: _root.after(0, show_ready)
 
@@ -753,6 +797,7 @@ def init():
     global _grouped
     _grouped = load_market()
     _presort()
+    _presort_arsiv()
     status(t("ready"))
     if _root: _root.after(0, show_ready)
 
