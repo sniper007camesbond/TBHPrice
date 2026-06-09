@@ -516,19 +516,7 @@ def check_update():
         return None
 
 def run_update_check():
-    if _ready_frame:   _ready_frame.pack_forget()
-    if _loading_frame: _loading_frame.pack(fill="x", padx=20, pady=(0, 12))
-    if _root:          _root.geometry("340x155")
-    status(t("chk_update"))
-    result = check_update()
-    if result is None:
-        status(t("up_to_date", v=VERSION))
-        if _root: _root.after(1500, show_ready)
-        return
-    new_ver, _ = result
-    status(t("new_ver", v=new_ver))
     webbrowser.open(f"https://github.com/{GITHUB_REPO}/releases/latest")
-    if _root: _root.after(2000, show_ready)
 
 _root          = None
 _ready_frame   = None
