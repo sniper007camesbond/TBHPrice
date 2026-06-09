@@ -8,13 +8,12 @@ A lightweight Steam Market price checker for **The Harvest Brigade (THB)** — a
 - **F10 hotkey** — open the search popup from anywhere without switching windows
 - **Rarity colors** — item names are color-coded by rarity (Legendary, Arcana, Immortal, etc.)
 - **Multi-variant support** — shows price range when an item has multiple variants
-- **Auto-update** — checks GitHub for a newer version and updates itself in one click
 - **TR / EN language toggle** — switch the UI language at any time
 - **Offline archive** — falls back to the bundled archive if Steam is unreachable
 
 ## Download
 
-Grab the latest **TBHFiyat.exe** from the [Releases](../../releases/latest) page. No installation needed — just run it.
+Grab the latest **TBHFiyat.zip** from the [Releases](../../releases/latest) page. Extract the folder and run `TBHFiyat.exe`. No installation needed.
 
 ## Usage
 
@@ -23,7 +22,7 @@ Grab the latest **TBHFiyat.exe** from the [Releases](../../releases/latest) page
 3. Start typing an item name — results filter instantly
 4. Click any item to open its Steam Market listing in your browser
 5. Click **Refresh Prices** to fetch the latest prices from Steam
-6. Click **Update** to check for a new version of the app
+6. Click **Update** to open the releases page and download the latest version
 
 ## How prices work
 
@@ -34,18 +33,6 @@ Prices are fetched from the Steam Community Market API. On first launch (or afte
 Requirements: Python 3.10+, pip
 
 ```
-pip install requests keyboard pywin32 pyinstaller
-pyinstaller --onefile --windowed --name "TBHFiyat" ^
-    --hidden-import=win32api ^
-    --hidden-import=win32gui ^
-    --hidden-import=keyboard ^
-    --version-file=version_info.txt ^
-    fiyat_bak.py
+pip install requests pyinstaller
+pyinstaller --onedir --windowed --name "TBHFiyat" --version-file=version_info.txt -y fiyat_bak.py
 ```
-
-## Auto-update flow
-
-When a new release is published on this repo, clicking **Update** will:
-1. Download the new `TBHFiyat.exe` from the release assets
-2. Replace the current executable after the app closes
-3. Restart automatically
