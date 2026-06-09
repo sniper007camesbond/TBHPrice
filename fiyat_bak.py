@@ -7,6 +7,7 @@ import requests, os, json, time, webbrowser
 import tkinter as tk
 from tkinter import ttk
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import ctypes, ctypes.wintypes
 import io
 from PIL import Image, ImageTk
@@ -292,33 +293,81 @@ def set_progress(val, maxv=None):
     except: pass
 
 # ── Item ikonları ──────────────────────────────
-_img_pil   = {}   # icon_url → PIL.Image (ham, boyutsuz)
-_img_photo = {}   # (icon_url, size) → ImageTk.PhotoImage
-_build_gen = [0]
+_img_photo   = {}   # (icon_url, size) → ImageTk.PhotoImage  (RAM cache)
+_build_gen   = [0]
+_img_pending = set()              # indirilmekte olan url'ler
+_icon_pool   = ThreadPoolExecutor(max_workers=4)
 
-def _fetch_pil(icon_url, callback, gen, size):
-    """Arka planda PIL indir, main thread'de callback çağır."""
-    def _worker():
+def _icon_cache_dir():
+    d = os.path.join(BASE_DIR, "icon_cache")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def _icon_disk_path(icon_url):
+    safe = icon_url.replace("/", "_").replace("\\", "_")[:120]
+    return os.path.join(_icon_cache_dir(), safe + ".png")
+
+def _load_pil_from_disk(icon_url):
+    """Disk cache'den oku; yoksa None."""
+    p = _icon_disk_path(icon_url)
+    if os.path.exists(p):
         try:
-            if icon_url not in _img_pil:
-                url = f"https://community.akamai.steamstatic.com/economy/image/{icon_url}"
-                r = requests.get(url, timeout=6, headers=HEADERS)
-                _img_pil[icon_url] = Image.open(io.BytesIO(r.content)).convert("RGBA")
-            if _root and gen == _build_gen[0]:
-                _root.after(0, lambda: callback(icon_url, gen, size))
+            return Image.open(p).convert("RGBA")
         except Exception:
             pass
-    threading.Thread(target=_worker, daemon=True).start()
+    return None
+
+def _save_pil_to_disk(icon_url, img):
+    try:
+        img.save(_icon_disk_path(icon_url), "PNG")
+    except Exception:
+        pass
 
 def _get_photo(icon_url, size):
-    """PhotoImage döner; yoksa None."""
+    """RAM cache'den PhotoImage döner; yoksa None."""
+    return _img_photo.get((icon_url, size))
+
+def _fetch_and_cache(icon_url, callback, gen, size):
+    """
+    Worker (thread pool): disk → Steam CDN sırasıyla dene.
+    Resize + PhotoImage oluşturma da burada (main thread yük almaz).
+    Hazır olunca main thread'de canvas güncelle.
+    """
+    if icon_url in _img_pending:
+        return
+    _img_pending.add(icon_url)
+    def _worker():
+        pil = None
+        try:
+            pil = _load_pil_from_disk(icon_url)
+            if pil is None:
+                url = f"https://community.akamai.steamstatic.com/economy/image/{icon_url}"
+                r = requests.get(url, timeout=6, headers=HEADERS)
+                pil = Image.open(io.BytesIO(r.content)).convert("RGBA")
+                _save_pil_to_disk(icon_url, pil)
+            # Resize burada (worker thread) — main thread'e yük yok
+            key = (icon_url, size)
+            if key not in _img_photo:
+                resized = pil.resize((size, size), Image.LANCZOS)
+                # ImageTk.PhotoImage main thread'de oluşturulmalı
+                if _root and gen == _build_gen[0]:
+                    _root.after(0, lambda p=resized: _make_photo_and_cb(icon_url, size, p, callback, gen))
+        except Exception:
+            pass
+        finally:
+            _img_pending.discard(icon_url)
+    _icon_pool.submit(_worker)
+
+def _make_photo_and_cb(icon_url, size, resized_pil, callback, gen):
+    """Main thread'de PhotoImage oluştur, callback çağır."""
+    if gen != _build_gen[0]: return
     key = (icon_url, size)
     if key not in _img_photo:
-        pil = _img_pil.get(icon_url)
-        if pil is None:
-            return None
-        _img_photo[key] = ImageTk.PhotoImage(pil.resize((size, size), Image.LANCZOS))
-    return _img_photo[(icon_url, size)]
+        try:
+            _img_photo[key] = ImageTk.PhotoImage(resized_pil)
+        except Exception:
+            return
+    callback(icon_url, gen, size)
 
 def _load_icon_canvas(icon_url, canvas, item_id, gen, size):
     """Canvas image item'ını async yükle."""
@@ -334,7 +383,7 @@ def _load_icon_canvas(icon_url, canvas, item_id, gen, size):
             p = _get_photo(url, sz)
             if p: canvas.itemconfig(item_id, image=p)
         except: pass
-    _fetch_pil(icon_url, _cb, gen, size)
+    _fetch_and_cache(icon_url, _cb, gen, size)
 
 # ── Arama popup'i ──────────────────────────────
 _search_win = None
