@@ -726,6 +726,30 @@ def fetch_price_detail(hash_name):
         pass
     return None
 
+def fetch_listings(hash_name):
+    """Render endpoint → fiyat başına kaç ilan var topla."""
+    try:
+        from urllib.parse import quote
+        r = requests.get(
+            f"https://steamcommunity.com/market/listings/{APP_ID}/{quote(hash_name)}/render/",
+            params={"query": "", "start": 0, "count": 100, "currency": 1, "language": "english"},
+            headers=HEADERS, timeout=5
+        )
+        data = r.json()
+        if not data.get("success"): return None
+        listings = data.get("listinginfo", {})
+        prices = {}
+        for item in listings.values():
+            p = item.get("converted_price", 0) + item.get("converted_fee", 0)
+            if p == 0:
+                p = item.get("price", 0) + item.get("fee", 0)
+            if p > 0:
+                prices[p] = prices.get(p, 0) + 1
+        total = data.get("total_count", 0)
+        return {"rows": sorted(prices.items()), "total": total}
+    except Exception:
+        return None
+
 _detail_gen = [0]
 
 def open_price_detail(name, variants, search_win):
@@ -850,47 +874,73 @@ def _pd_build(body, name, variants, pd_win, sc):
             c.bind("<Button-1>", _click_row)
             c.bind("<Enter>", _enter); c.bind("<Leave>", _leave)
 
-    # priceoverview (tek varyant için)
+    # İlan listesi (tek varyant için)
     if len(variants) == 1:
         sep = tk.Frame(body, bg=R["border"], height=1)
         sep.pack(fill="x", pady=(8, 4))
         _detail_gen[0] += 1
         gen = _detail_gen[0]
         hn  = variants[0].get("hash_name", "")
-        lbl = tk.Label(body, text="Güncel fiyat bilgisi alınıyor...",
+        lbl = tk.Label(body, text="İlan listesi alınıyor...",
                        bg=R["bg"], fg=R["muted"], font=("Segoe UI", fs_s))
         lbl.pack(anchor="w")
 
         cached = getattr(pd_win, "_ov_cache", {}).get(hn)
         if cached is not None:
-            _pd_overview(body, lbl, cached, pd_win, sc, fs, fs_s, pad)
+            _pd_listings(body, lbl, cached, pd_win, sc, fs, fs_s, pad)
         else:
             def _fetch():
-                d = fetch_price_detail(hn)
+                d = fetch_listings(hn)
                 try:
                     if d is not None and pd_win.winfo_exists():
                         pd_win._ov_cache[hn] = d
                 except Exception: pass
                 if _root and gen == _detail_gen[0]:
-                    _root.after(0, lambda: _pd_overview(body, lbl, d, pd_win, sc, fs, fs_s, pad))
+                    _root.after(0, lambda: _pd_listings(body, lbl, d, pd_win, sc, fs, fs_s, pad))
             threading.Thread(target=_fetch, daemon=True).start()
 
-def _pd_overview(body, lbl, d, pd_win, sc, fs, fs_s, pad):
+def _pd_listings(body, lbl, d, pd_win, sc, fs, fs_s, pad):
     try:
         if not pd_win.winfo_exists(): return
         lbl.destroy()
-        if d is None: return
-        for label, val, color in [
-            ("En Düşük",  d["lowest"], R["yesil"]),
-            ("Medyan",    d["median"], R["text"]),
-            ("24s Hacim", d["volume"], R["muted"]),
-        ]:
-            row = tk.Frame(body, bg=R["bg"])
+        if d is None:
+            tk.Label(body, text="Veri alınamadı", bg=R["bg"], fg=R["muted"],
+                     font=("Segoe UI", fs_s)).pack(anchor="w")
+            return
+
+        rows  = d.get("rows", [])
+        total = d.get("total", 0)
+
+        # Başlık satırı
+        hdr = tk.Frame(body, bg=R["panel"])
+        hdr.pack(fill="x")
+        tk.Label(hdr, text="Fiyat", bg=R["panel"], fg=R["baslik"],
+                 font=("Segoe UI", fs_s, "bold"), anchor="w",
+                 padx=pad, pady=pad).pack(side="left", fill="x", expand=True)
+        tk.Label(hdr, text="Miktar", bg=R["panel"], fg=R["baslik"],
+                 font=("Segoe UI", fs_s, "bold"), width=int(7*sc), anchor="e",
+                 padx=pad, pady=pad).pack(side="right")
+
+        for i, (price_cents, count) in enumerate(rows):
+            bg = R["sec"] if i % 2 == 0 else R["bg"]
+            row = tk.Frame(body, bg=bg)
             row.pack(fill="x")
-            tk.Label(row, text=label + ":", bg=R["bg"], fg=R["muted"],
-                     font=("Segoe UI", fs_s), width=int(10*sc), anchor="w").pack(side="left")
-            tk.Label(row, text=val, bg=R["bg"], fg=color,
-                     font=("Segoe UI", fs, "bold"), anchor="w").pack(side="left")
+            tk.Label(row, text=fmt_price(price_cents), bg=bg, fg=R["yesil"],
+                     font=("Segoe UI", fs, "bold"), anchor="w",
+                     padx=pad, pady=2).pack(side="left", fill="x", expand=True)
+            tk.Label(row, text=f"{count:,}", bg=bg, fg=R["text"],
+                     font=("Segoe UI", fs), width=int(7*sc), anchor="e",
+                     padx=pad, pady=2).pack(side="right")
+
+        shown = len(rows)
+        footer = f"Toplam {total:,} ilan"
+        if total > shown:
+            footer += f"  (ilk {shown} gösteriliyor)"
+        foot = tk.Frame(body, bg=R["panel"])
+        foot.pack(fill="x", pady=(1, 0))
+        tk.Label(foot, text=footer, bg=R["panel"], fg=R["muted"],
+                 font=("Segoe UI", fs_s), padx=pad, pady=pad).pack(anchor="w")
+
         pd_win.update_idletasks()
         pd_win.geometry(f"{pd_win.winfo_reqwidth()}x{pd_win.winfo_reqheight()}")
     except Exception:
