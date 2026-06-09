@@ -285,40 +285,41 @@ def set_progress(val, maxv=None):
     except: pass
 
 # ── Item ikonları ──────────────────────────────
-_img_cache  = {}   # icon_url → ImageTk.PhotoImage
-_build_gen  = [0]  # her build_results çağrısında artar, stale callback'leri iptal eder
+_img_pil   = {}   # icon_url → PIL.Image (ham, boyutsuz)
+_img_photo = {}   # (icon_url, size) → ImageTk.PhotoImage
+_build_gen = [0]
 
-def _load_icon(icon_url, label, gen):
-    """Arka planda icon indir, main thread'de label'a uygula."""
+def _load_icon(icon_url, label, gen, size=40):
     if not icon_url:
+        return
+    cache_key = (icon_url, size)
+    if cache_key in _img_photo:
+        photo = _img_photo[cache_key]
+        label.config(image=photo); label.image = photo
         return
     def _worker():
         try:
-            if icon_url in _img_cache:
-                img = _img_cache[icon_url]
-            else:
-                url = f"https://community.akamai.steamstatic.com/economy/image/{icon_url}/40fx40f"
+            if icon_url not in _img_pil:
+                url = f"https://community.akamai.steamstatic.com/economy/image/{icon_url}"
                 r = requests.get(url, timeout=6, headers=HEADERS)
-                pil = Image.open(io.BytesIO(r.content)).resize((40, 40), Image.LANCZOS)
-                _img_cache[icon_url] = pil   # PIL nesnesini sakla, PhotoImage main thread'de
-            # main thread'e geç
+                _img_pil[icon_url] = Image.open(io.BytesIO(r.content)).convert("RGBA")
             if _root and gen == _build_gen[0]:
-                _root.after(0, lambda: _apply_icon(label, icon_url, gen))
+                _root.after(0, lambda: _apply_icon(label, icon_url, gen, size))
         except Exception:
             pass
     threading.Thread(target=_worker, daemon=True).start()
 
-def _apply_icon(label, icon_url, gen):
+def _apply_icon(label, icon_url, gen, size):
     if gen != _build_gen[0]:
         return
     try:
-        pil = _img_cache.get(icon_url)
-        if pil is None or isinstance(pil, ImageTk.PhotoImage):
-            return
-        photo = ImageTk.PhotoImage(pil)
-        _img_cache[icon_url] = photo   # PIL → PhotoImage olarak güncelle
-        label.config(image=photo)
-        label.image = photo
+        cache_key = (icon_url, size)
+        if cache_key not in _img_photo:
+            pil = _img_pil.get(icon_url)
+            if pil is None: return
+            _img_photo[cache_key] = ImageTk.PhotoImage(pil.resize((size, size), Image.LANCZOS))
+        photo = _img_photo[cache_key]
+        label.config(image=photo); label.image = photo
     except Exception:
         pass
 
@@ -375,11 +376,11 @@ def open_search():
     entry.pack(fill="x", ipady=5, padx=2)
     entry.focus_set()
 
-    # Sonuc listesi — canvas yok, place ile elle scroll
-    CLIP_H = 320
-    list_frame = tk.Frame(inner, bg=R["bg"], height=CLIP_H, width=380)
-    list_frame.pack_propagate(False)
-    list_frame.pack(fill="x", padx=8, pady=(0, 8))
+    # Sonuc listesi — place tabanlı scroll, yeniden boyutlandırılabilir
+    BASE_W = 380
+
+    list_frame = tk.Frame(inner, bg=R["bg"])
+    list_frame.pack(fill="both", expand=True, padx=8, pady=(0, 0))
 
     sb = tk.Scrollbar(list_frame, orient="vertical")
     sb.pack(side="right", fill="y")
@@ -388,14 +389,31 @@ def open_search():
     clip.pack(side="left", fill="both", expand=True)
     clip.pack_propagate(False)
 
-    _rf   = [None]   # mevcut icerik frame
-    _sy   = [0]      # scroll pozisyonu (px)
+    # Yeniden boyutlandırma tutamacı
+    grip = tk.Frame(inner, bg=R["border"], height=8, cursor="size_nw_se")
+    grip.pack(fill="x", side="bottom")
+    _rsz = {"x": 0, "y": 0, "w": 0, "h": 0}
+    _rsz_after = [None]
+    def rsz_start(e):
+        _rsz.update(x=e.x_root, y=e.y_root, w=sw.winfo_width(), h=sw.winfo_height())
+    def rsz_move(e):
+        dw = e.x_root - _rsz["x"]; dh = e.y_root - _rsz["y"]
+        sw.geometry(f"{max(320, _rsz['w']+dw)}x{max(260, _rsz['h']+dh)}")
+    def rsz_end(e):
+        if _rsz_after[0]: sw.after_cancel(_rsz_after[0])
+        _rsz_after[0] = sw.after(80, lambda: build_results(entry.get()))
+    grip.bind("<ButtonPress-1>", rsz_start)
+    grip.bind("<B1-Motion>",     rsz_move)
+    grip.bind("<ButtonRelease-1>", rsz_end)
+
+    _rf = [None]
+    _sy = [0]
 
     def _do_scroll(delta_units):
         if _rf[0] is None: return
         _rf[0].update_idletasks()
         content_h = _rf[0].winfo_reqheight()
-        clip_h    = clip.winfo_height() or CLIP_H
+        clip_h    = max(clip.winfo_height(), 1)
         max_y     = max(content_h - clip_h, 0)
         _sy[0]    = max(0, min(_sy[0] + delta_units * 18, max_y))
         _rf[0].place(x=0, y=-_sy[0], relwidth=1)
@@ -406,13 +424,12 @@ def open_search():
         if _rf[0] is None: return
         _rf[0].update_idletasks()
         content_h = _rf[0].winfo_reqheight()
-        clip_h    = clip.winfo_height() or CLIP_H
+        clip_h    = max(clip.winfo_height(), 1)
         if args[0] == "moveto":
             _sy[0] = int(float(args[1]) * content_h)
         elif args[0] == "scroll":
             _sy[0] += int(args[1]) * 18
-        max_y  = max(content_h - clip_h, 0)
-        _sy[0] = max(0, min(_sy[0], max_y))
+        _sy[0] = max(0, min(_sy[0], max(content_h - clip_h, 0)))
         _rf[0].place(x=0, y=-_sy[0], relwidth=1)
         if content_h > 0:
             sb.set(_sy[0] / content_h, (_sy[0] + clip_h) / content_h)
@@ -421,7 +438,6 @@ def open_search():
     sw.bind_all("<MouseWheel>", lambda e: _do_scroll(-int(e.delta / 120)))
 
     def build_results(q=""):
-        # Eski frame'i temizle, yeni olustur
         if _rf[0]:
             try: _rf[0].destroy()
             except: pass
@@ -429,6 +445,16 @@ def open_search():
         sb.set(0, 1)
         _build_gen[0] += 1
         gen = _build_gen[0]
+
+        # Ölçek hesapla
+        sw.update_idletasks()
+        cw = clip.winfo_width()
+        sc = max(1.0, cw / BASE_W) if cw > 50 else 1.0
+        icon_sz  = max(32, int(40 * sc))
+        fn_name  = ("Segoe UI", max(9,  int(9  * sc)), "bold")
+        fn_info  = ("Segoe UI", max(7,  int(7  * sc)))
+        fn_price = ("Segoe UI", max(10, int(10 * sc)), "bold")
+        pad_x    = max(8, int(8 * sc))
 
         rf = tk.Frame(clip, bg=R["bg"])
         rf.place(x=0, y=0, relwidth=1)
@@ -450,39 +476,35 @@ def open_search():
 
             row = tk.Frame(rf, bg=R["bg"], cursor="hand2")
             row.pack(fill="x", pady=1)
-
             def on_enter(e, r=row): r.config(bg=R["sec"])
             def on_leave(e, r=row): r.config(bg=R["bg"])
             row.bind("<Enter>", on_enter)
             row.bind("<Leave>", on_leave)
 
-            # İkon
-            icon_lbl = tk.Label(row, bg=R["bg"], width=40, height=40,
-                                 anchor="center")
-            icon_lbl.pack(side="left", padx=(4, 0), pady=2)
-            icon_lbl.bind("<Enter>", on_enter)
-            icon_lbl.bind("<Leave>", on_leave)
+            # İkon (Frame ile piksel boyutu garantili)
             icon_url = variants[0].get("icon_url", "")
             if icon_url:
-                if icon_url in _img_cache and isinstance(_img_cache[icon_url], ImageTk.PhotoImage):
-                    photo = _img_cache[icon_url]
-                    icon_lbl.config(image=photo)
-                    icon_lbl.image = photo
-                else:
-                    _load_icon(icon_url, icon_lbl, gen)
+                icon_frm = tk.Frame(row, bg=R["bg"], width=icon_sz, height=icon_sz)
+                icon_frm.pack_propagate(False)
+                icon_frm.pack(side="left", padx=(4, 2), pady=2)
+                icon_frm.bind("<Enter>", on_enter); icon_frm.bind("<Leave>", on_leave)
+                icon_lbl = tk.Label(icon_frm, bg=R["bg"])
+                icon_lbl.pack(expand=True)
+                icon_lbl.bind("<Enter>", on_enter); icon_lbl.bind("<Leave>", on_leave)
+                _load_icon(icon_url, icon_lbl, gen, icon_sz)
 
             left = tk.Frame(row, bg=R["bg"])
             left.pack(side="left", fill="x", expand=True, padx=(4, 0), pady=3)
             left.bind("<Enter>", on_enter); left.bind("<Leave>", on_leave)
 
             tk.Label(left, text=name, bg=R["bg"], fg=_rarity_fg(variants),
-                     font=("Segoe UI", 9, "bold"), anchor="w").pack(fill="x")
+                     font=fn_name, anchor="w").pack(fill="x")
 
             info = f"{listings:,} {t('listings')}"
             if n_var > 1:
                 info += f"  •  {n_var} {t('variant')}"
             tk.Label(left, text=info, bg=R["bg"], fg=R["muted"],
-                     font=("Segoe UI", 7), anchor="w").pack(fill="x")
+                     font=fn_info, anchor="w").pack(fill="x")
 
             sv = sorted(variants, key=lambda x: x.get("price", 0))
             pt_min = sv[0].get("price_text") or fmt_price(p_min)
@@ -490,7 +512,7 @@ def open_search():
             price_str = pt_min if pt_min == pt_max else f"{pt_min} ~ {pt_max}"
 
             price_lbl = tk.Label(row, text=price_str, bg=R["bg"], fg=R["yesil"],
-                                 font=("Segoe UI", 10, "bold"), padx=8)
+                                 font=fn_price, padx=pad_x)
             price_lbl.pack(side="right")
 
             def open_item(n=name, vs=variants):
@@ -508,12 +530,11 @@ def open_search():
 
         if shown == 0 and q:
             tk.Label(rf, text=t("no_match"), bg=R["bg"],
-                     fg=R["muted"], font=("Segoe UI", 9), pady=10).pack()
+                     fg=R["muted"], font=fn_info, pady=10).pack()
 
-        # Scrollbar guncelle
         rf.update_idletasks()
         content_h = rf.winfo_reqheight()
-        clip_h    = clip.winfo_height() or CLIP_H
+        clip_h    = max(clip.winfo_height(), 1)
         if content_h > 0:
             sb.set(0, min(1.0, clip_h / content_h))
 
