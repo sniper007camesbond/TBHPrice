@@ -23,7 +23,7 @@ def _get_screen_size():
     return _user32.GetSystemMetrics(0), _user32.GetSystemMetrics(1)
 
 APP_ID       = 3678970
-VERSION      = "1.4.1"
+VERSION      = "1.5.3"
 GITHUB_REPO  = "sniper007camesbond/TBHFiyat"
 import sys
 
@@ -736,11 +736,14 @@ def open_price_detail(name, variants, search_win):
             if ad["win"].winfo_exists():
                 if ad["name"] == name:
                     ad["win"].lift(); ad["win"].focus_force(); return
-                ad["win"].destroy()
+                ad["win"].withdraw()
+            ad["win"].destroy()
         except Exception:
             pass
         ad["win"]  = None
         ad["name"] = None
+    try: _root.update()
+    except Exception: pass
     pd_win = tk.Toplevel(_root)
     ad["win"]  = pd_win
     ad["name"] = name
