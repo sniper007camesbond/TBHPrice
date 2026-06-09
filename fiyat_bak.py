@@ -418,6 +418,7 @@ def open_search():
     title_lbl = tk.Label(top, text=t("popup_title"), bg=R["panel"], fg=R["baslik"],
                          font=("Segoe UI", 9, "bold"), cursor="fleur")
     title_lbl.pack(side="left")
+    _ui_popup["popup_title"] = title_lbl
     tk.Button(top, text="✕", bg=R["panel"], fg=R["kirmizi"],
               font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=4,
               cursor="arrow",
@@ -461,6 +462,8 @@ def open_search():
     btn_arsiv  = _make_tab("tab_arsiv",  "arsiv")
     btn_guncel.pack(side="left", padx=(0, 2))
     btn_arsiv.pack(side="left")
+    _ui_popup["tab_guncel"] = btn_guncel
+    _ui_popup["tab_arsiv"]  = btn_arsiv
 
     def _refresh_tabs():
         if _src[0] == "guncel":
@@ -632,6 +635,7 @@ def open_search():
 def close_search(w):
     global _search_win
     _search_win = None
+    _ui_popup.clear()
     try: w.destroy()
     except: pass
 
@@ -686,9 +690,14 @@ def _presort_arsiv():
     _grouped_arsiv.update(g)
     _sorted_items_arsiv[:] = sorted(_grouped_arsiv.items())
 
+_ui_popup = {}   # popup'a ait lang widget'ları (popup açıkken dolu)
+
 def toggle_lang():
     _lang[0] = "en" if _lang[0] == "tr" else "tr"
     for key, widget in _ui.items():
+        try: widget.config(text=t(key))
+        except: pass
+    for key, widget in _ui_popup.items():
         try: widget.config(text=t(key))
         except: pass
 
