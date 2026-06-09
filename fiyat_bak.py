@@ -635,66 +635,69 @@ def close_search(w):
 
 # ── Fiyat detay popup ──────────────────────────
 def fetch_price_detail(hash_name):
-    """Steam'den satış histogramı çek. (price_str, qty_str) listesi döner ya da None."""
-    try:
-        listing_url = f"https://steamcommunity.com/market/listings/{APP_ID}/{requests.utils.quote(hash_name)}"
-        r = requests.get(listing_url, headers=HEADERS, timeout=10)
-        m = re.search(r'Market_LoadOrderSpread\(\s*(\d+)\s*\)', r.text)
-        if not m:
-            return None, None
-        item_nameid = m.group(1)
+    """Steam satış histogramı çek. Önce itemordershistogram, olmadı render endpoint."""
+    encoded = requests.utils.quote(hash_name, safe="")
 
-        hr = requests.get(
-            "https://steamcommunity.com/market/itemordershistogram",
-            params={"country": "US", "language": "english", "currency": 1,
-                    "item_nameid": item_nameid, "two_factor": 0},
+    # Yöntem 1: listing sayfasından item_nameid al → histogram
+    try:
+        r = requests.get(
+            f"https://steamcommunity.com/market/listings/{APP_ID}/{encoded}",
             headers=HEADERS, timeout=10
         )
-        hdata = hr.json()
-        graph = hdata.get("sell_order_graph", [])
-        if not graph:
-            return None, None
-
-        rows = []
-        prev = 0
-        for i, entry in enumerate(graph[:7]):
-            price   = entry[0]
-            cum_qty = entry[1]
-            qty     = cum_qty - prev
-            prev    = cum_qty
-            if i == 6 and len(graph) > 7:
-                label = f"${price:.2f}+"
-            else:
-                label = f"${price:.2f}"
-            rows.append((label, f"{qty:,}"))
-
-        summary = hdata.get("sell_order_summary", "")
-        clean   = re.sub(r"<[^>]+>", "", summary).strip()
-        return rows, clean
+        m = re.search(r'Market_LoadOrderSpread\(\s*(\d+)\s*\)', r.text)
+        if m:
+            hr = requests.get(
+                "https://steamcommunity.com/market/itemordershistogram",
+                params={"country": "US", "language": "english", "currency": 1,
+                        "item_nameid": m.group(1), "two_factor": 0},
+                headers=HEADERS, timeout=10
+            )
+            hdata = hr.json()
+            graph = hdata.get("sell_order_graph", [])
+            if graph:
+                rows, prev = [], 0
+                for i, entry in enumerate(graph[:7]):
+                    qty   = entry[1] - prev
+                    prev  = entry[1]
+                    label = f"${entry[0]:.2f}" + ("+" if i == 6 and len(graph) > 7 else "")
+                    rows.append((label, f"{qty:,}"))
+                summary = re.sub(r"<[^>]+>", "", hdata.get("sell_order_summary", "")).strip()
+                return rows, summary
     except Exception:
-        return None, None
+        pass
+
+    # Yöntem 2: render endpoint → bireysel listingları fiyata göre grupla
+    try:
+        r2 = requests.get(
+            f"https://steamcommunity.com/market/listings/{APP_ID}/{encoded}/render/",
+            params={"start": 0, "count": 100, "currency": 1, "language": "english"},
+            headers=HEADERS, timeout=10
+        )
+        data = r2.json()
+        price_counts = {}
+        for info in data.get("listinginfo", {}).values():
+            cents = info.get("converted_price", 0) + info.get("converted_fee", 0)
+            if cents > 0:
+                p = cents / 100
+                price_counts[p] = price_counts.get(p, 0) + 1
+        if price_counts:
+            rows = [(f"${p:.2f}", f"{c:,}") for p, c in sorted(price_counts.items())]
+            total = sum(price_counts.values())
+            min_p = min(price_counts)
+            return rows, f"${min_p:.2f} fiyatından başlayan {total:,} ilan (ilk 100)"
+    except Exception:
+        pass
+
+    return None, None
 
 def open_price_detail(name, variants, search_win):
     pd_win = tk.Toplevel(_root)
-    pd_win.title("")
-    pd_win.overrideredirect(True)
+    pd_win.title(name[:40])
+    pd_win.resizable(False, False)
     pd_win.attributes("-topmost", True)
-    pd_win.configure(bg=R["border"])
+    pd_win.configure(bg=R["bg"])
 
-    inner = tk.Frame(pd_win, bg=R["bg"])
-    inner.pack(padx=1, pady=1, fill="both", expand=True)
-
-    # Başlık
-    top = tk.Frame(inner, bg=R["panel"], padx=8, pady=6)
-    top.pack(fill="x")
-    short_name = name if len(name) <= 32 else name[:30] + "…"
-    tk.Label(top, text=short_name, bg=R["panel"], fg=_rarity_fg(variants),
-             font=("Segoe UI", 9, "bold"), anchor="w").pack(side="left", fill="x", expand=True)
-    tk.Button(top, text="✕", bg=R["panel"], fg=R["kirmizi"],
-              font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=4,
-              cursor="arrow", command=pd_win.destroy).pack(side="right")
-
-    body = tk.Frame(inner, bg=R["bg"], padx=12, pady=8)
+    body = tk.Frame(pd_win, bg=R["bg"], padx=12, pady=8)
     body.pack(fill="both", expand=True)
 
     if len(variants) > 1:
