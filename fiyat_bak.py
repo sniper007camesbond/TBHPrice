@@ -730,20 +730,24 @@ _detail_gen = [0]
 
 def open_price_detail(name, variants, search_win):
     """Tek detay penceresi: aynı item → focus, farklı item → eskiyi kapat yeniyi aç."""
-    ad = _active_detail
-    if ad["win"] is not None:
+    ad       = _active_detail
+    old_win  = ad["win"]
+    old_name = ad["name"]
+
+    if old_win is not None:
         try:
-            if ad["win"].winfo_exists():
-                if ad["name"] == name:
-                    ad["win"].lift(); ad["win"].focus_force(); return
-                ad["win"].withdraw()
-            ad["win"].destroy()
+            if old_win.winfo_exists():
+                if old_name == name:
+                    old_win.lift(); old_win.focus_force(); return
+                old_win.withdraw()   # anında gizle
         except Exception:
             pass
+        # destroy'dan önce referansı temizle; <Destroy> event'i artık bozamaz
         ad["win"]  = None
         ad["name"] = None
-    try: _root.update()
-    except Exception: pass
+        try: old_win.destroy()
+        except Exception: pass
+
     pd_win = tk.Toplevel(_root)
     ad["win"]  = pd_win
     ad["name"] = name
@@ -773,7 +777,7 @@ def open_price_detail(name, variants, search_win):
     pd_win._ov_cache  = {}
     pd_win._last_w    = 0
     pd_win.bind("<Configure>", _on_cfg)
-    pd_win.bind("<Destroy>", lambda e: _pd_clear_active(name))
+    pd_win.bind("<Destroy>", lambda e: _pd_clear_active(name) if e.widget is pd_win else None)
 
     _pd_build(body, name, variants, pd_win, 1.0)
 
