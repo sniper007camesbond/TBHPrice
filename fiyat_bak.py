@@ -46,6 +46,8 @@ LANG = {
         "variant":      "varyant",
         "tab_guncel":   "Guncel Fiyatlar",
         "tab_arsiv":    "Arsiv Fiyatlari",
+        "cmp_compare":  "Karsilastir",
+        "cmp_clear":    "Temizle",
         "chk_update":   "Guncelleme kontrol ediliyor...",
         "up_to_date":   "Zaten guncel! (v{v})",
         "new_ver":      "Yeni surum bulundu: v{v} — indirme sayfasi aciliyor...",
@@ -75,6 +77,8 @@ LANG = {
         "variant":      "variant",
         "tab_guncel":   "Current Prices",
         "tab_arsiv":    "Archive Prices",
+        "cmp_compare":  "Compare",
+        "cmp_clear":    "Clear",
         "chk_update":   "Checking for updates...",
         "up_to_date":   "Up to date! (v{v})",
         "new_ver":      "New version found: v{v} — opening download page...",
@@ -521,16 +525,20 @@ def open_search():
                         padx=12, pady=4, cursor="hand2",
                         command=lambda: open_compare_popup(dict(_compare_items), sw))
     cmp_btn.pack(side="left")
-    tk.Button(cmp_bar, text="Temizle", bg=R["panel"], fg=R["muted"],
+    cmp_clear_btn = tk.Button(cmp_bar, text=t("cmp_clear"), bg=R["panel"], fg=R["muted"],
               font=("Segoe UI", 8), relief="flat", bd=0, padx=8, pady=4, cursor="hand2",
-              command=lambda: _clear_compare()).pack(side="left", padx=(4,0))
+              command=lambda: _clear_compare())
+    cmp_clear_btn.pack(side="left", padx=(4,0))
+    _ui_popup["cmp_clear"] = cmp_clear_btn
 
     def _update_cmp_bar():
-        cmp_btn.config(text=f"Karşılaştır ({len(_compare_items)})")
+        cmp_btn.config(text=f"{t('cmp_compare')} ({len(_compare_items)})")
         if _compare_items:
             cmp_bar.pack(fill="x", after=tab_frame)
         else:
             cmp_bar.pack_forget()
+
+    _ui_popup["__fn_cmp_bar"] = lambda: _update_cmp_bar()
 
     def _clear_compare():
         _compare_items.clear()
@@ -731,6 +739,8 @@ def open_price_detail(name, variants, search_win):
                 ad["win"].destroy()
         except Exception:
             pass
+        ad["win"]  = None
+        ad["name"] = None
     pd_win = tk.Toplevel(_root)
     ad["win"]  = pd_win
     ad["name"] = name
@@ -749,11 +759,16 @@ def open_price_detail(name, variants, search_win):
 
     def _on_cfg(e):
         if e.widget is not pd_win: return
+        nw = pd_win.winfo_width()
+        if abs(nw - pd_win._last_w) < 8: return
+        pd_win._last_w = nw
         if hasattr(pd_win, "_rsz_after") and pd_win._rsz_after:
             pd_win.after_cancel(pd_win._rsz_after)
         pd_win._rsz_after = pd_win.after(120, _rebuild)
 
     pd_win._rsz_after = None
+    pd_win._ov_cache  = {}
+    pd_win._last_w    = 0
     pd_win.bind("<Configure>", _on_cfg)
     pd_win.bind("<Destroy>", lambda e: _pd_clear_active(name))
 
@@ -839,11 +854,19 @@ def _pd_build(body, name, variants, pd_win, sc):
                        bg=R["bg"], fg=R["muted"], font=("Segoe UI", fs_s))
         lbl.pack(anchor="w")
 
-        def _fetch():
-            d = fetch_price_detail(hn)
-            if _root and gen == _detail_gen[0]:
-                _root.after(0, lambda: _pd_overview(body, lbl, d, pd_win, sc, fs, fs_s, pad))
-        threading.Thread(target=_fetch, daemon=True).start()
+        cached = getattr(pd_win, "_ov_cache", {}).get(hn)
+        if cached is not None:
+            _pd_overview(body, lbl, cached, pd_win, sc, fs, fs_s, pad)
+        else:
+            def _fetch():
+                d = fetch_price_detail(hn)
+                try:
+                    if d is not None and pd_win.winfo_exists():
+                        pd_win._ov_cache[hn] = d
+                except Exception: pass
+                if _root and gen == _detail_gen[0]:
+                    _root.after(0, lambda: _pd_overview(body, lbl, d, pd_win, sc, fs, fs_s, pad))
+            threading.Thread(target=_fetch, daemon=True).start()
 
 def _pd_overview(body, lbl, d, pd_win, sc, fs, fs_s, pad):
     try:
@@ -1044,9 +1067,13 @@ def toggle_lang():
     for key, widget in _ui.items():
         try: widget.config(text=t(key))
         except: pass
-    for key, widget in _ui_popup.items():
-        try: widget.config(text=t(key))
-        except: pass
+    for key, item in _ui_popup.items():
+        if key.startswith("__fn_"):
+            try: item()
+            except: pass
+        else:
+            try: item.config(text=t(key))
+            except: pass
 
 def build_window():
     global _root, _status_label, _progress_bar, _ready_frame, _loading_frame
