@@ -8,6 +8,8 @@ import tkinter as tk
 from tkinter import ttk
 import threading
 import ctypes, ctypes.wintypes
+import io
+from PIL import Image, ImageTk
 
 _user32 = ctypes.windll.user32
 
@@ -282,6 +284,44 @@ def set_progress(val, maxv=None):
             _progress_bar.update_idletasks()
     except: pass
 
+# ── Item ikonları ──────────────────────────────
+_img_cache  = {}   # icon_url → ImageTk.PhotoImage
+_build_gen  = [0]  # her build_results çağrısında artar, stale callback'leri iptal eder
+
+def _load_icon(icon_url, label, gen):
+    """Arka planda icon indir, main thread'de label'a uygula."""
+    if not icon_url:
+        return
+    def _worker():
+        try:
+            if icon_url in _img_cache:
+                img = _img_cache[icon_url]
+            else:
+                url = f"https://community.akamai.steamstatic.com/economy/image/{icon_url}/40fx40f"
+                r = requests.get(url, timeout=6, headers=HEADERS)
+                pil = Image.open(io.BytesIO(r.content)).resize((40, 40), Image.LANCZOS)
+                _img_cache[icon_url] = pil   # PIL nesnesini sakla, PhotoImage main thread'de
+            # main thread'e geç
+            if _root and gen == _build_gen[0]:
+                _root.after(0, lambda: _apply_icon(label, icon_url, gen))
+        except Exception:
+            pass
+    threading.Thread(target=_worker, daemon=True).start()
+
+def _apply_icon(label, icon_url, gen):
+    if gen != _build_gen[0]:
+        return
+    try:
+        pil = _img_cache.get(icon_url)
+        if pil is None or isinstance(pil, ImageTk.PhotoImage):
+            return
+        photo = ImageTk.PhotoImage(pil)
+        _img_cache[icon_url] = photo   # PIL → PhotoImage olarak güncelle
+        label.config(image=photo)
+        label.image = photo
+    except Exception:
+        pass
+
 # ── Arama popup'i ──────────────────────────────
 _search_win = None
 
@@ -387,6 +427,8 @@ def open_search():
             except: pass
         _sy[0] = 0
         sb.set(0, 1)
+        _build_gen[0] += 1
+        gen = _build_gen[0]
 
         rf = tk.Frame(clip, bg=R["bg"])
         rf.place(x=0, y=0, relwidth=1)
@@ -413,6 +455,21 @@ def open_search():
             def on_leave(e, r=row): r.config(bg=R["bg"])
             row.bind("<Enter>", on_enter)
             row.bind("<Leave>", on_leave)
+
+            # İkon
+            icon_lbl = tk.Label(row, bg=R["bg"], width=40, height=40,
+                                 anchor="center")
+            icon_lbl.pack(side="left", padx=(4, 0), pady=2)
+            icon_lbl.bind("<Enter>", on_enter)
+            icon_lbl.bind("<Leave>", on_leave)
+            icon_url = variants[0].get("icon_url", "")
+            if icon_url:
+                if icon_url in _img_cache and isinstance(_img_cache[icon_url], ImageTk.PhotoImage):
+                    photo = _img_cache[icon_url]
+                    icon_lbl.config(image=photo)
+                    icon_lbl.image = photo
+                else:
+                    _load_icon(icon_url, icon_lbl, gen)
 
             left = tk.Frame(row, bg=R["bg"])
             left.pack(side="left", fill="x", expand=True, padx=(4, 0), pady=3)
