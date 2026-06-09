@@ -388,7 +388,8 @@ def _load_icon_canvas(icon_url, canvas, item_id, gen, size):
     _fetch_and_cache(icon_url, _cb, gen, size)
 
 # ── Arama popup'i ──────────────────────────────
-_search_win = None
+_search_win    = None
+_active_detail = {"win": None, "name": None}
 
 def open_search():
     global _search_win
@@ -505,10 +506,55 @@ def open_search():
     grip.bind("<B1-Motion>",     rsz_move)
     grip.bind("<ButtonRelease-1>", rsz_end)
 
-    _row_rects   = {}
-    _row_actions = {}
-    _hovered     = [-1]
-    _cur_row_h   = [ROW_H_B]
+    _row_rects     = {}
+    _row_actions   = {}
+    _row_check_ids = {}   # i → (box_id, tick_id)
+    _row_names     = {}   # i → (name, variants)
+    _compare_items = {}   # name → variants
+    _hovered       = [-1]
+    _cur_row_h     = [ROW_H_B]
+
+    # Karşılaştırma bar (başta gizli)
+    cmp_bar = tk.Frame(inner, bg=R["bg"], padx=8, pady=4)
+    cmp_btn = tk.Button(cmp_bar, text="Karşılaştır (0)", bg=R["yesil"], fg=R["bg"],
+                        font=("Segoe UI", 8, "bold"), relief="flat", bd=0,
+                        padx=12, pady=4, cursor="hand2",
+                        command=lambda: open_compare_popup(dict(_compare_items), sw))
+    cmp_btn.pack(side="left")
+    tk.Button(cmp_bar, text="Temizle", bg=R["panel"], fg=R["muted"],
+              font=("Segoe UI", 8), relief="flat", bd=0, padx=8, pady=4, cursor="hand2",
+              command=lambda: _clear_compare()).pack(side="left", padx=(4,0))
+
+    def _update_cmp_bar():
+        cmp_btn.config(text=f"Karşılaştır ({len(_compare_items)})")
+        if _compare_items:
+            cmp_bar.pack(fill="x", after=tab_frame)
+        else:
+            cmp_bar.pack_forget()
+
+    def _clear_compare():
+        _compare_items.clear()
+        for i, (box_id, tick_id) in _row_check_ids.items():
+            try:
+                cv.itemconfig(box_id,  fill=R["panel"])
+                cv.itemconfig(tick_id, text="")
+            except Exception: pass
+        _update_cmp_bar()
+
+    def _toggle_compare(idx):
+        info = _row_names.get(idx)
+        if not info: return
+        name, variants = info
+        if name in _compare_items:
+            del _compare_items[name]
+        else:
+            _compare_items[name] = variants
+        checked = name in _compare_items
+        if idx in _row_check_ids:
+            box_id, tick_id = _row_check_ids[idx]
+            cv.itemconfig(box_id,  fill=R["yesil"] if checked else R["panel"])
+            cv.itemconfig(tick_id, text="✓" if checked else "")
+        _update_cmp_bar()
 
     def _on_motion(e):
         y   = cv.canvasy(e.y)
@@ -520,17 +566,25 @@ def open_search():
         if idx in _row_rects:
             cv.itemconfig(_row_rects[idx], fill=R["sec"])
 
+    CHK_W = 26  # checkbox sütun genişliği (px)
+
     def _on_click(e):
+        cw_ = cv.winfo_width()
         idx = int(cv.canvasy(e.y) // _cur_row_h[0])
-        fn  = _row_actions.get(idx)
-        if fn: fn()
+        if e.x >= cw_ - CHK_W:
+            _toggle_compare(idx)
+        else:
+            fn = _row_actions.get(idx)
+            if fn: fn()
 
     cv.bind("<Motion>",   _on_motion)
     cv.bind("<Button-1>", _on_click)
 
     def build_results(q=""):
         cv.delete("all")
-        _row_rects.clear(); _row_actions.clear(); _hovered[0] = -1
+        _row_rects.clear(); _row_actions.clear()
+        _row_check_ids.clear(); _row_names.clear()
+        _hovered[0] = -1
         _build_gen[0] += 1
         gen = _build_gen[0]
 
@@ -590,8 +644,20 @@ def open_search():
             pt_min = sv[0].get("price_text") or fmt_price(p_min)
             pt_max = sv[-1].get("price_text") or fmt_price(p_max)
             price_str = pt_min if pt_min == pt_max else f"{pt_min} ~ {pt_max}"
-            cv.create_text(cw - 6, y + rh//2, text=price_str,
+            cv.create_text(cw - CHK_W - 4, y + rh//2, text=price_str,
                            fill=R["yesil"], font=fn_price, anchor="e")
+
+            # Checkbox (sağ köşe)
+            checked = name in _compare_items
+            cbx = cw - CHK_W + 3
+            cby = y + rh//2 - 9
+            box_id  = cv.create_rectangle(cbx, cby, cbx+20, cby+18,
+                                           fill=R["yesil"] if checked else R["panel"],
+                                           outline=R["border"])
+            tick_id = cv.create_text(cbx+10, cby+9, text="✓" if checked else "",
+                                     fill=R["bg"], font=("Segoe UI", 8, "bold"), anchor="center")
+            _row_check_ids[i] = (box_id, tick_id)
+            _row_names[i]     = (name, variants)
 
             cv.create_line(0, y+rh-1, cw, y+rh-1, fill=R["border"])
 
@@ -633,9 +699,10 @@ def close_search(w):
     try: w.destroy()
     except: pass
 
-# ── Fiyat detay popup ──────────────────────────
+# ── Fiyat detay / karşılaştır popup ───────────
+PD_BASE_W = 280
+
 def fetch_price_detail(hash_name):
-    """priceoverview + variant bilgisi döner: (dict|None)"""
     try:
         r = requests.get(
             "https://steamcommunity.com/market/priceoverview/",
@@ -644,11 +711,9 @@ def fetch_price_detail(hash_name):
         )
         data = r.json()
         if data.get("success"):
-            return {
-                "lowest":  data.get("lowest_price", "—"),
-                "median":  data.get("median_price", "—"),
-                "volume":  data.get("volume", "—"),
-            }
+            return {"lowest": data.get("lowest_price","—"),
+                    "median": data.get("median_price","—"),
+                    "volume": data.get("volume","—")}
     except Exception:
         pass
     return None
@@ -656,105 +721,270 @@ def fetch_price_detail(hash_name):
 _detail_gen = [0]
 
 def open_price_detail(name, variants, search_win):
+    """Tek detay penceresi: aynı item → focus, farklı item → eskiyi kapat yeniyi aç."""
+    ad = _active_detail
+    if ad["win"] is not None:
+        try:
+            if ad["win"].winfo_exists():
+                if ad["name"] == name:
+                    ad["win"].lift(); ad["win"].focus_force(); return
+                ad["win"].destroy()
+        except Exception:
+            pass
     pd_win = tk.Toplevel(_root)
+    ad["win"]  = pd_win
+    ad["name"] = name
     pd_win.title(name[:40])
-    pd_win.resizable(False, False)
     pd_win.attributes("-topmost", True)
     pd_win.configure(bg=R["bg"])
+    pd_win.minsize(PD_BASE_W, 120)
 
-    body = tk.Frame(pd_win, bg=R["bg"], padx=12, pady=8)
+    body = tk.Frame(pd_win, bg=R["bg"], padx=10, pady=8)
     body.pack(fill="both", expand=True)
 
-    # Her varyant için ayrı satır + priceoverview yükle
-    _pd_build(body, name, variants, pd_win)
+    def _rebuild():
+        for w in body.winfo_children(): w.destroy()
+        sc = max(1.0, pd_win.winfo_width() / PD_BASE_W)
+        _pd_build(body, name, variants, pd_win, sc)
+
+    def _on_cfg(e):
+        if e.widget is not pd_win: return
+        if hasattr(pd_win, "_rsz_after") and pd_win._rsz_after:
+            pd_win.after_cancel(pd_win._rsz_after)
+        pd_win._rsz_after = pd_win.after(120, _rebuild)
+
+    pd_win._rsz_after = None
+    pd_win.bind("<Configure>", _on_cfg)
+    pd_win.bind("<Destroy>", lambda e: _pd_clear_active(name))
+
+    _pd_build(body, name, variants, pd_win, 1.0)
 
     pd_win.update_idletasks()
     pw, ph = pd_win.winfo_reqwidth(), pd_win.winfo_reqheight()
     sx, sy = _get_screen_size()
-    wx  = search_win.winfo_x()
-    sw_ = search_win.winfo_width()
-    wy  = search_win.winfo_y()
-    rx  = wx + sw_ + 6
-    if rx + pw > sx: rx = wx - pw - 6
-    ry  = max(0, min(wy, sy - ph))
+    rx = search_win.winfo_x() + search_win.winfo_width() + 6
+    if rx + pw > sx: rx = search_win.winfo_x() - pw - 6
+    ry = max(0, min(search_win.winfo_y(), sy - ph))
     pd_win.geometry(f"{pw}x{ph}+{rx}+{ry}")
 
-def _pd_build(body, name, variants, pd_win):
-    # Varyant tablosu (her satır tıklanabilir → Steam)
-    hdr = tk.Frame(body, bg=R["panel"])
-    hdr.pack(fill="x", pady=(0, 2))
-    for txt, w, anchor in [("İlan", 8, "e"), ("Fiyat", 9, "e")]:
-        tk.Label(hdr, text=txt, bg=R["panel"], fg=R["baslik"],
-                 font=("Segoe UI", 8, "bold"), width=w, anchor=anchor, padx=4, pady=3).pack(side="right")
-    tk.Label(hdr, text="Varyant", bg=R["panel"], fg=R["baslik"],
-             font=("Segoe UI", 8, "bold"), anchor="w", padx=4, pady=3).pack(side="left", fill="x", expand=True)
+def _pd_clear_active(name):
+    if _active_detail["name"] == name:
+        _active_detail["win"]  = None
+        _active_detail["name"] = None
 
-    sorted_v = sorted(variants, key=lambda x: x.get("price", 0))
-    for i, v in enumerate(sorted_v):
-        bg     = R["sec"] if i % 2 == 0 else R["bg"]
-        pt     = v.get("price_text") or fmt_price(v.get("price", 0))
-        lst    = f"{v.get('listings', 0):,}"
-        vname  = v.get("name", name)
-        short  = vname if len(vname) <= 28 else vname[:26] + "…"
-        hn     = v.get("hash_name", "")
+def _pd_build(body, name, variants, pd_win, sc):
+    fs   = max(8,  int(8  * sc))
+    fs_s = max(7,  int(7  * sc))
+    fs_h = max(9,  int(9  * sc))
+    pad  = max(4,  int(4  * sc))
+
+    # Başlık
+    tk.Label(body, text=name, bg=R["bg"], fg=_rarity_fg(variants),
+             font=("Segoe UI", fs_h, "bold"), wraplength=int(250*sc), justify="left"
+             ).pack(anchor="w", pady=(0, 6))
+
+    # Sütun başlıkları
+    hdr = tk.Frame(body, bg=R["panel"])
+    hdr.pack(fill="x")
+    for txt, w, anch in [("İlan", int(7*sc), "e"), ("Fiyat", int(8*sc), "e")]:
+        tk.Label(hdr, text=txt, bg=R["panel"], fg=R["baslik"],
+                 font=("Segoe UI", fs_s, "bold"), width=w, anchor=anch,
+                 padx=pad, pady=pad).pack(side="right")
+    tk.Label(hdr, text="Varyant", bg=R["panel"], fg=R["baslik"],
+             font=("Segoe UI", fs_s, "bold"), anchor="w",
+             padx=pad, pady=pad).pack(side="left", fill="x", expand=True)
+
+    for i, v in enumerate(sorted(variants, key=lambda x: x.get("price", 0))):
+        bg    = R["sec"] if i % 2 == 0 else R["bg"]
+        pt    = v.get("price_text") or fmt_price(v.get("price", 0))
+        lst   = f"{v.get('listings',0):,}"
+        vname = v.get("name", name)
+        vname = vname if len(vname) <= 30 else vname[:28] + "…"
+        hn    = v.get("hash_name", "")
 
         row = tk.Frame(body, bg=bg, cursor="hand2")
         row.pack(fill="x")
-        row.bind("<Button-1>", lambda e, h=hn: (webbrowser.open(steam_url(h)), pd_win.destroy()))
 
-        tk.Label(row, text=short, bg=bg, fg=_rarity_fg(variants),
-                 font=("Segoe UI", 8), anchor="w", padx=4, pady=4).pack(side="left", fill="x", expand=True)
+        tk.Label(row, text=vname, bg=bg, fg=R["text"],
+                 font=("Segoe UI", fs), anchor="w", padx=pad, pady=pad
+                 ).pack(side="left", fill="x", expand=True)
         tk.Label(row, text=pt,  bg=bg, fg=R["yesil"],
-                 font=("Segoe UI", 8, "bold"), width=9, anchor="e", padx=4).pack(side="right")
+                 font=("Segoe UI", fs, "bold"), width=int(8*sc), anchor="e", padx=pad
+                 ).pack(side="right")
         tk.Label(row, text=lst, bg=bg, fg=R["muted"],
-                 font=("Segoe UI", 8), width=8, anchor="e", padx=4).pack(side="right")
+                 font=("Segoe UI", fs_s), width=int(7*sc), anchor="e", padx=pad
+                 ).pack(side="right")
 
-        def on_enter(e, r=row, b=bg): r.config(bg=R["sec"]); [w.config(bg=R["sec"]) for w in r.winfo_children()]
-        def on_leave(e, r=row, b=bg): r.config(bg=b);        [w.config(bg=b)        for w in r.winfo_children()]
-        row.bind("<Enter>", on_enter); row.bind("<Leave>", on_leave)
-        for w in row.winfo_children():
-            w.bind("<Enter>", on_enter); w.bind("<Leave>", on_leave)
-            w.bind("<Button-1>", lambda e, h=hn: (webbrowser.open(steam_url(h)), pd_win.destroy()))
+        def _click_row(e, h=hn): webbrowser.open(steam_url(h)); pd_win.destroy()
+        def _enter(e, r=row, b=bg):
+            r.config(bg=R["sec"])
+            for c in r.winfo_children(): c.config(bg=R["sec"])
+        def _leave(e, r=row, b=bg):
+            r.config(bg=b)
+            for c in r.winfo_children(): c.config(bg=b)
+        row.bind("<Button-1>", _click_row)
+        row.bind("<Enter>", _enter); row.bind("<Leave>", _leave)
+        for c in row.winfo_children():
+            c.bind("<Button-1>", _click_row)
+            c.bind("<Enter>", _enter); c.bind("<Leave>", _leave)
 
-    # priceoverview: sadece tek varyant için, birden fazlası karışık olur
+    # priceoverview (tek varyant için)
     if len(variants) == 1:
+        sep = tk.Frame(body, bg=R["border"], height=1)
+        sep.pack(fill="x", pady=(8, 4))
         _detail_gen[0] += 1
-        gen      = _detail_gen[0]
-        hash_name = variants[0].get("hash_name", "")
-        info_frame = tk.Frame(body, bg=R["bg"])
-        info_frame.pack(fill="x", pady=(6, 0))
-        lbl_spin = tk.Label(info_frame, text="Steam'den fiyat bilgisi alınıyor...",
-                            bg=R["bg"], fg=R["muted"], font=("Segoe UI", 7), anchor="w")
-        lbl_spin.pack(anchor="w")
+        gen = _detail_gen[0]
+        hn  = variants[0].get("hash_name", "")
+        lbl = tk.Label(body, text="Güncel fiyat bilgisi alınıyor...",
+                       bg=R["bg"], fg=R["muted"], font=("Segoe UI", fs_s))
+        lbl.pack(anchor="w")
 
         def _fetch():
-            d = fetch_price_detail(hash_name)
+            d = fetch_price_detail(hn)
             if _root and gen == _detail_gen[0]:
-                _root.after(0, lambda: _pd_show_overview(info_frame, lbl_spin, d, pd_win))
-
+                _root.after(0, lambda: _pd_overview(body, lbl, d, pd_win, sc, fs, fs_s, pad))
         threading.Thread(target=_fetch, daemon=True).start()
 
-def _pd_show_overview(frame, lbl_spin, d, pd_win):
+def _pd_overview(body, lbl, d, pd_win, sc, fs, fs_s, pad):
     try:
         if not pd_win.winfo_exists(): return
-        lbl_spin.destroy()
-        if d is None:
-            return
+        lbl.destroy()
+        if d is None: return
         for label, val, color in [
             ("En Düşük",  d["lowest"], R["yesil"]),
             ("Medyan",    d["median"], R["text"]),
             ("24s Hacim", d["volume"], R["muted"]),
         ]:
-            row = tk.Frame(frame, bg=R["bg"])
+            row = tk.Frame(body, bg=R["bg"])
             row.pack(fill="x")
             tk.Label(row, text=label + ":", bg=R["bg"], fg=R["muted"],
-                     font=("Segoe UI", 8), width=11, anchor="w").pack(side="left")
+                     font=("Segoe UI", fs_s), width=int(10*sc), anchor="w").pack(side="left")
             tk.Label(row, text=val, bg=R["bg"], fg=color,
-                     font=("Segoe UI", 8, "bold"), anchor="w").pack(side="left")
+                     font=("Segoe UI", fs, "bold"), anchor="w").pack(side="left")
         pd_win.update_idletasks()
         pd_win.geometry(f"{pd_win.winfo_reqwidth()}x{pd_win.winfo_reqheight()}")
     except Exception:
         pass
+
+# ── Karşılaştırma popup ────────────────────────
+def open_compare_popup(compare_items, search_win):
+    """Seçili itemleri yan yana karşılaştır."""
+    cmp = tk.Toplevel(_root)
+    cmp.title("Karşılaştır")
+    cmp.attributes("-topmost", True)
+    cmp.configure(bg=R["bg"])
+    cmp.minsize(200, 180)
+
+    CARD_W = 180
+    items  = list(compare_items.items())  # [(name, variants), ...]
+
+    outer = tk.Frame(cmp, bg=R["bg"])
+    outer.pack(fill="both", expand=True, padx=8, pady=8)
+
+    cards_frame = tk.Frame(outer, bg=R["bg"])
+    cards_frame.pack(fill="both", expand=True)
+
+    for col_i, (name, variants) in enumerate(items):
+        card = tk.Frame(cards_frame, bg=R["panel"], padx=8, pady=6,
+                        relief="flat", bd=0, width=CARD_W)
+        card.pack(side="left", fill="y", padx=(0, 6))
+        card.pack_propagate(False)
+
+        # İsim
+        short = name if len(name) <= 20 else name[:18] + "…"
+        tk.Label(card, text=short, bg=R["panel"], fg=_rarity_fg(variants),
+                 font=("Segoe UI", 8, "bold"), wraplength=CARD_W-16, justify="left"
+                 ).pack(anchor="w")
+
+        # İkon
+        icon_url = variants[0].get("icon_url", "")
+        if icon_url:
+            ibg = _rarity_bg(variants)
+            ifrm = tk.Frame(card, bg=ibg, width=48, height=48)
+            ifrm.pack_propagate(False)
+            ifrm.pack(anchor="w", pady=4)
+            ilbl = tk.Label(ifrm, bg=ibg)
+            ilbl.pack(expand=True)
+            _build_gen[0] += 1
+            _load_icon_canvas_label(icon_url, ilbl, _build_gen[0], 48)
+
+        tk.Frame(card, bg=R["border"], height=1).pack(fill="x", pady=4)
+
+        # Varyantlar
+        for v in sorted(variants, key=lambda x: x.get("price", 0)):
+            pt  = v.get("price_text") or fmt_price(v.get("price", 0))
+            lst = f"{v.get('listings',0):,}"
+            r2 = tk.Frame(card, bg=R["panel"])
+            r2.pack(fill="x", pady=1)
+            tk.Label(r2, text=pt,  bg=R["panel"], fg=R["yesil"],
+                     font=("Segoe UI", 9, "bold"), anchor="w").pack(side="left")
+            tk.Label(r2, text=lst, bg=R["panel"], fg=R["muted"],
+                     font=("Segoe UI", 7), anchor="e").pack(side="right")
+
+        # priceoverview
+        lbl_ov = tk.Label(card, text="...", bg=R["panel"], fg=R["muted"],
+                          font=("Segoe UI", 7))
+        lbl_ov.pack(anchor="w", pady=(4,0))
+        hn = variants[0].get("hash_name","") if len(variants)==1 else ""
+
+        def _fetch_ov(h=hn, lbl=lbl_ov, vs=variants, c=card):
+            if not h: lbl.destroy(); return
+            d = fetch_price_detail(h)
+            if _root:
+                _root.after(0, lambda: _cmp_ov(lbl, d, c))
+
+        threading.Thread(target=_fetch_ov, daemon=True).start()
+
+        # Steam butonu
+        hn_first = variants[0].get("hash_name","")
+        tk.Button(card, text="Steam'de Aç", bg=R["yesil"], fg=R["bg"],
+                  font=("Segoe UI", 7, "bold"), relief="flat", bd=0,
+                  padx=6, pady=3, cursor="hand2",
+                  command=lambda h=hn_first: webbrowser.open(steam_url(h))
+                  ).pack(pady=(6,0), anchor="w")
+
+    # Konumlandır: search_win altına veya sağına
+    cmp.update_idletasks()
+    pw, ph = cmp.winfo_reqwidth(), cmp.winfo_reqheight()
+    sx, sy = _get_screen_size()
+    wx, wy = search_win.winfo_x(), search_win.winfo_y()
+    sh     = search_win.winfo_height()
+    # Altına sığar mı?
+    if wy + sh + 8 + ph <= sy:
+        cmp.geometry(f"{pw}x{ph}+{wx}+{wy+sh+8}")
+    else:
+        rx = wx + search_win.winfo_width() + 6
+        if rx + pw > sx: rx = wx - pw - 6
+        cmp.geometry(f"{pw}x{ph}+{rx}+{wy}")
+
+def _cmp_ov(lbl, d, card):
+    try:
+        if not card.winfo_exists(): return
+        lbl.destroy()
+        if d is None: return
+        for label, val, color in [("↓", d["lowest"], R["yesil"]),
+                                   ("~", d["median"], R["text"])]:
+            r2 = tk.Frame(card, bg=R["panel"])
+            r2.pack(fill="x")
+            tk.Label(r2, text=label, bg=R["panel"], fg=R["muted"],
+                     font=("Segoe UI", 7), width=2).pack(side="left")
+            tk.Label(r2, text=val, bg=R["panel"], fg=color,
+                     font=("Segoe UI", 8, "bold")).pack(side="left")
+    except Exception:
+        pass
+
+def _load_icon_canvas_label(icon_url, lbl, gen, size):
+    """Label widget'ına async ikon yükle (karşılaştırma kartları için)."""
+    if not icon_url: return
+    photo = _get_photo(icon_url, size)
+    if photo:
+        try: lbl.config(image=photo); lbl.image = photo
+        except: pass
+        return
+    def _cb(p):
+        try: lbl.config(image=p); lbl.image = p
+        except: pass
+    _fetch_and_cache(icon_url, _cb, gen, size)
 
 # ── Ana pencere ────────────────────────────────
 # ── Otomatik güncelleme ────────────────────────
