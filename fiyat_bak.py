@@ -635,60 +635,25 @@ def close_search(w):
 
 # ── Fiyat detay popup ──────────────────────────
 def fetch_price_detail(hash_name):
-    """Steam satış histogramı çek. Önce itemordershistogram, olmadı render endpoint."""
-    encoded = requests.utils.quote(hash_name, safe="")
-
-    # Yöntem 1: listing sayfasından item_nameid al → histogram
+    """priceoverview + variant bilgisi döner: (dict|None)"""
     try:
         r = requests.get(
-            f"https://steamcommunity.com/market/listings/{APP_ID}/{encoded}",
+            "https://steamcommunity.com/market/priceoverview/",
+            params={"appid": APP_ID, "currency": 1, "market_hash_name": hash_name},
             headers=HEADERS, timeout=5
         )
-        m = re.search(r'Market_LoadOrderSpread\(\s*(\d+)\s*\)', r.text)
-        if m:
-            hr = requests.get(
-                "https://steamcommunity.com/market/itemordershistogram",
-                params={"country": "US", "language": "english", "currency": 1,
-                        "item_nameid": m.group(1), "two_factor": 0},
-                headers=HEADERS, timeout=5
-            )
-            hdata = hr.json()
-            graph = hdata.get("sell_order_graph", [])
-            if graph:
-                rows, prev = [], 0
-                for i, entry in enumerate(graph[:7]):
-                    qty   = entry[1] - prev
-                    prev  = entry[1]
-                    label = f"${entry[0]:.2f}" + ("+" if i == 6 and len(graph) > 7 else "")
-                    rows.append((label, f"{qty:,}"))
-                summary = re.sub(r"<[^>]+>", "", hdata.get("sell_order_summary", "")).strip()
-                return rows, summary
+        data = r.json()
+        if data.get("success"):
+            return {
+                "lowest":  data.get("lowest_price", "—"),
+                "median":  data.get("median_price", "—"),
+                "volume":  data.get("volume", "—"),
+            }
     except Exception:
         pass
+    return None
 
-    # Yöntem 2: render endpoint → bireysel listingları fiyata göre grupla
-    try:
-        r2 = requests.get(
-            f"https://steamcommunity.com/market/listings/{APP_ID}/{encoded}/render/",
-            params={"start": 0, "count": 100, "currency": 1, "language": "english"},
-            headers=HEADERS, timeout=5
-        )
-        data = r2.json()
-        price_counts = {}
-        for info in data.get("listinginfo", {}).values():
-            cents = info.get("converted_price", 0) + info.get("converted_fee", 0)
-            if cents > 0:
-                p = cents / 100
-                price_counts[p] = price_counts.get(p, 0) + 1
-        if price_counts:
-            rows = [(f"${p:.2f}", f"{c:,}") for p, c in sorted(price_counts.items())]
-            total = sum(price_counts.values())
-            min_p = min(price_counts)
-            return rows, f"${min_p:.2f} fiyatından başlayan {total:,} ilan (ilk 100)"
-    except Exception:
-        pass
-
-    return None, None
+_detail_gen = [0]
 
 def open_price_detail(name, variants, search_win):
     pd_win = tk.Toplevel(_root)
@@ -700,103 +665,92 @@ def open_price_detail(name, variants, search_win):
     body = tk.Frame(pd_win, bg=R["bg"], padx=12, pady=8)
     body.pack(fill="both", expand=True)
 
-    if len(variants) > 1:
-        _pd_variant_list(body, variants, pd_win)
-    else:
-        _pd_load_detail(body, variants[0], pd_win)
+    # Her varyant için ayrı satır + priceoverview yükle
+    _pd_build(body, name, variants, pd_win)
 
-    # Konumlandır: search_win'in sağına, sığmazsa soluna
     pd_win.update_idletasks()
-    pw  = pd_win.winfo_reqwidth()
-    ph  = pd_win.winfo_reqheight()
+    pw, ph = pd_win.winfo_reqwidth(), pd_win.winfo_reqheight()
     sx, sy = _get_screen_size()
     wx  = search_win.winfo_x()
-    wy  = search_win.winfo_y()
     sw_ = search_win.winfo_width()
+    wy  = search_win.winfo_y()
     rx  = wx + sw_ + 6
     if rx + pw > sx: rx = wx - pw - 6
     ry  = max(0, min(wy, sy - ph))
     pd_win.geometry(f"{pw}x{ph}+{rx}+{ry}")
 
-def _pd_variant_list(body, variants, pd_win):
-    tk.Label(body, text="Varyant seç:", bg=R["bg"], fg=R["muted"],
-             font=("Segoe UI", 8)).pack(anchor="w", pady=(0, 4))
-    for v in sorted(variants, key=lambda x: x.get("price", 0)):
-        pt   = v.get("price_text") or fmt_price(v.get("price", 0))
-        lbl  = v.get("name", v.get("hash_name", ""))
-        text = f"{lbl}  —  {pt}"
-        btn  = tk.Button(body, text=text, bg=R["panel"], fg=R["text"],
-                         font=("Segoe UI", 8), relief="flat", bd=0,
-                         padx=6, pady=4, anchor="w", cursor="hand2",
-                         command=lambda _v=v: _pd_open_variant(body, _v, pd_win))
-        btn.pack(fill="x", pady=1)
+def _pd_build(body, name, variants, pd_win):
+    # Varyant tablosu (her satır tıklanabilir → Steam)
+    hdr = tk.Frame(body, bg=R["panel"])
+    hdr.pack(fill="x", pady=(0, 2))
+    for txt, w, anchor in [("İlan", 8, "e"), ("Fiyat", 9, "e")]:
+        tk.Label(hdr, text=txt, bg=R["panel"], fg=R["baslik"],
+                 font=("Segoe UI", 8, "bold"), width=w, anchor=anchor, padx=4, pady=3).pack(side="right")
+    tk.Label(hdr, text="Varyant", bg=R["panel"], fg=R["baslik"],
+             font=("Segoe UI", 8, "bold"), anchor="w", padx=4, pady=3).pack(side="left", fill="x", expand=True)
 
-def _pd_open_variant(body, variant, pd_win):
-    for w in body.winfo_children(): w.destroy()
-    _pd_load_detail(body, variant, pd_win)
+    sorted_v = sorted(variants, key=lambda x: x.get("price", 0))
+    for i, v in enumerate(sorted_v):
+        bg     = R["sec"] if i % 2 == 0 else R["bg"]
+        pt     = v.get("price_text") or fmt_price(v.get("price", 0))
+        lst    = f"{v.get('listings', 0):,}"
+        vname  = v.get("name", name)
+        short  = vname if len(vname) <= 28 else vname[:26] + "…"
+        hn     = v.get("hash_name", "")
 
-_detail_gen = [0]
+        row = tk.Frame(body, bg=bg, cursor="hand2")
+        row.pack(fill="x")
+        row.bind("<Button-1>", lambda e, h=hn: (webbrowser.open(steam_url(h)), pd_win.destroy()))
 
-def _pd_load_detail(body, variant, pd_win):
-    _detail_gen[0] += 1
-    gen = _detail_gen[0]
-    lbl_loading = tk.Label(body, text="Yükleniyor...", bg=R["bg"], fg=R["muted"],
-                           font=("Segoe UI", 9))
-    lbl_loading.pack(pady=20)
-    hash_name = variant.get("hash_name", "")
+        tk.Label(row, text=short, bg=bg, fg=_rarity_fg(variants),
+                 font=("Segoe UI", 8), anchor="w", padx=4, pady=4).pack(side="left", fill="x", expand=True)
+        tk.Label(row, text=pt,  bg=bg, fg=R["yesil"],
+                 font=("Segoe UI", 8, "bold"), width=9, anchor="e", padx=4).pack(side="right")
+        tk.Label(row, text=lst, bg=bg, fg=R["muted"],
+                 font=("Segoe UI", 8), width=8, anchor="e", padx=4).pack(side="right")
 
-    def _fetch():
-        rows, summary = fetch_price_detail(hash_name)
-        if _root and gen == _detail_gen[0]:
-            _root.after(0, lambda: _pd_render(body, lbl_loading, rows, summary, hash_name, pd_win))
+        def on_enter(e, r=row, b=bg): r.config(bg=R["sec"]); [w.config(bg=R["sec"]) for w in r.winfo_children()]
+        def on_leave(e, r=row, b=bg): r.config(bg=b);        [w.config(bg=b)        for w in r.winfo_children()]
+        row.bind("<Enter>", on_enter); row.bind("<Leave>", on_leave)
+        for w in row.winfo_children():
+            w.bind("<Enter>", on_enter); w.bind("<Leave>", on_leave)
+            w.bind("<Button-1>", lambda e, h=hn: (webbrowser.open(steam_url(h)), pd_win.destroy()))
 
-    threading.Thread(target=_fetch, daemon=True).start()
+    # priceoverview: sadece tek varyant için, birden fazlası karışık olur
+    if len(variants) == 1:
+        _detail_gen[0] += 1
+        gen      = _detail_gen[0]
+        hash_name = variants[0].get("hash_name", "")
+        info_frame = tk.Frame(body, bg=R["bg"])
+        info_frame.pack(fill="x", pady=(6, 0))
+        lbl_spin = tk.Label(info_frame, text="Steam'den fiyat bilgisi alınıyor...",
+                            bg=R["bg"], fg=R["muted"], font=("Segoe UI", 7), anchor="w")
+        lbl_spin.pack(anchor="w")
 
-def _pd_render(body, lbl_loading, rows, summary, hash_name, pd_win):
+        def _fetch():
+            d = fetch_price_detail(hash_name)
+            if _root and gen == _detail_gen[0]:
+                _root.after(0, lambda: _pd_show_overview(info_frame, lbl_spin, d, pd_win))
+
+        threading.Thread(target=_fetch, daemon=True).start()
+
+def _pd_show_overview(frame, lbl_spin, d, pd_win):
     try:
         if not pd_win.winfo_exists(): return
-    except Exception:
-        return
-    try: lbl_loading.destroy()
-    except: pass
-
-    try:
-        if rows is None:
-            tk.Label(body, text="Veri alınamadı.", bg=R["bg"], fg=R["kirmizi"],
-                     font=("Segoe UI", 9)).pack(pady=10)
-            tk.Button(body, text="Steam'de Aç", bg=R["yesil"], fg=R["bg"],
-                      font=("Segoe UI", 9, "bold"), relief="flat", bd=0,
-                      padx=16, pady=6, cursor="hand2",
-                      command=lambda: (webbrowser.open(steam_url(hash_name)), pd_win.destroy())
-                      ).pack(pady=8)
+        lbl_spin.destroy()
+        if d is None:
             return
-
-        if summary:
-            tk.Label(body, text=summary, bg=R["bg"], fg=R["text"],
-                     font=("Segoe UI", 8), wraplength=230, justify="left").pack(anchor="w", pady=(0, 8))
-
-        hdr = tk.Frame(body, bg=R["panel"])
-        hdr.pack(fill="x")
-        tk.Label(hdr, text="Fiyat", bg=R["panel"], fg=R["baslik"],
-                 font=("Segoe UI", 8, "bold"), width=10, anchor="w", padx=6, pady=3).pack(side="left")
-        tk.Label(hdr, text="Miktar", bg=R["panel"], fg=R["baslik"],
-                 font=("Segoe UI", 8, "bold"), width=10, anchor="e", padx=6, pady=3).pack(side="right")
-
-        for i, (price_str, qty_str) in enumerate(rows):
-            bg = R["sec"] if i % 2 == 0 else R["bg"]
-            row = tk.Frame(body, bg=bg)
+        for label, val, color in [
+            ("En Düşük",  d["lowest"], R["yesil"]),
+            ("Medyan",    d["median"], R["text"]),
+            ("24s Hacim", d["volume"], R["muted"]),
+        ]:
+            row = tk.Frame(frame, bg=R["bg"])
             row.pack(fill="x")
-            tk.Label(row, text=price_str, bg=bg, fg=R["text"],
-                     font=("Segoe UI", 8), width=10, anchor="w", padx=6, pady=3).pack(side="left")
-            tk.Label(row, text=qty_str, bg=bg, fg=R["yesil"],
-                     font=("Segoe UI", 8, "bold"), width=10, anchor="e", padx=6, pady=3).pack(side="right")
-
-        tk.Button(body, text="Satın Al", bg=R["yesil"], fg=R["bg"],
-                  font=("Segoe UI", 10, "bold"), relief="flat", bd=0,
-                  padx=20, pady=7, cursor="hand2",
-                  command=lambda: (webbrowser.open(steam_url(hash_name)), pd_win.destroy())
-                  ).pack(pady=10)
-
+            tk.Label(row, text=label + ":", bg=R["bg"], fg=R["muted"],
+                     font=("Segoe UI", 8), width=11, anchor="w").pack(side="left")
+            tk.Label(row, text=val, bg=R["bg"], fg=color,
+                     font=("Segoe UI", 8, "bold"), anchor="w").pack(side="left")
         pd_win.update_idletasks()
         pd_win.geometry(f"{pd_win.winfo_reqwidth()}x{pd_win.winfo_reqheight()}")
     except Exception:
