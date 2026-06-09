@@ -4,6 +4,7 @@ pip install pyinstaller >nul 2>&1
 pyinstaller --onedir --windowed --name "TBHFiyat" ^
     --version-file=version_info.txt ^
     fiyat_bak.py
+copy /Y market_arsiv.json dist\TBHFiyat\
 echo.
-echo EXE olusturuldu: dist\TBHFiyat.exe
+echo EXE olusturuldu: dist\TBHFiyat\
 pause
