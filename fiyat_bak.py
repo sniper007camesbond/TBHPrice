@@ -433,6 +433,12 @@ def open_search():
         dx = e.x_root - _drag["x"]; dy = e.y_root - _drag["y"]
         sw.geometry(f"+{sw.winfo_x()+dx}+{sw.winfo_y()+dy}")
         _drag["x"] = e.x_root; _drag["y"] = e.y_root
+        dw = _active_detail.get("win")
+        if dw:
+            try:
+                if dw.winfo_exists():
+                    dw.geometry(f"+{dw.winfo_x()+dx}+{dw.winfo_y()+dy}")
+            except Exception: pass
     for w in (top, title_lbl):
         w.bind("<ButtonPress-1>", drag_start)
         w.bind("<B1-Motion>",     drag_move)
@@ -699,11 +705,19 @@ def open_search():
     wx = min(cx + 10, sx - pw - 10)
     wy = min(cy + 10, sy - ph - 10)
     sw.geometry(f"{pw}x{ph}+{wx}+{wy}")
+    _root.withdraw()
 
 def close_search(w):
     global _search_win
     _search_win = None
     _ui_popup.clear()
+    ad = _active_detail
+    if ad["win"]:
+        try: ad["win"].destroy()
+        except: pass
+        ad["win"] = None; ad["name"] = None
+    _root.deiconify()
+    _root.lift()
     try: w.destroy()
     except: pass
 
@@ -805,9 +819,10 @@ def open_price_detail(name, variants, search_win):
             pd_win.after_cancel(pd_win._rsz_after)
         pd_win._rsz_after = pd_win.after(120, _rebuild)
 
-    pd_win._rsz_after = None
-    pd_win._ov_cache  = {}
-    pd_win._last_w    = 0
+    pd_win._rsz_after   = None
+    pd_win._ov_cache    = {}
+    pd_win._last_w      = 0
+    pd_win._data_loaded = False
     pd_win.bind("<Configure>", _on_cfg)
     pd_win.bind("<Destroy>", lambda e: _pd_clear_active(name) if e.widget is pd_win else None)
 
@@ -934,8 +949,10 @@ def _pd_listings(body, lbl, d, pd_win, sc, fs, fs_s, pad):
                      font=("Segoe UI", fs, "bold"), anchor="w",
                      padx=pad, pady=3).pack(side="left")
 
-        pd_win.update_idletasks()
-        pd_win.geometry(f"{pd_win.winfo_reqwidth()}x{pd_win.winfo_reqheight()}")
+        if not getattr(pd_win, "_data_loaded", True):
+            pd_win._data_loaded = True
+            pd_win.update_idletasks()
+            pd_win.geometry(f"{pd_win.winfo_reqwidth()}x{pd_win.winfo_reqheight()}")
     except Exception:
         pass
 
