@@ -118,11 +118,18 @@ def _rarity_fg(variants):
     nc = (variants[0].get("name_color") or "").upper()[:6]
     if nc in RARITY_COLOR:
         return RARITY_COLOR[nc]
-    # name_color yoksa isimden coz: "Sword (Legendary) A"
     m = re.search(r'\((\w+)\)', variants[0].get("name", ""))
     if m:
         return _RARITY_WORD.get(m.group(1).lower(), "#d0bfad")
     return "#d0bfad"
+
+def _rarity_bg(variants):
+    fg = _rarity_fg(variants).lstrip("#")
+    try:
+        r, g, b = int(fg[0:2], 16), int(fg[2:4], 16), int(fg[4:6], 16)
+        return f"#{int(r*0.28):02x}{int(g*0.28):02x}{int(b*0.28):02x}"
+    except Exception:
+        return R["panel"]
 
 R = {
     "bg":      "#130b05",
@@ -478,14 +485,15 @@ def open_search():
             row.bind("<Enter>", on_enter)
             row.bind("<Leave>", on_leave)
 
-            # İkon (Frame ile piksel boyutu garantili)
+            # İkon (rarity arka plan rengi ile)
             icon_url = variants[0].get("icon_url", "")
+            ibg = _rarity_bg(variants)
             if icon_url:
-                icon_frm = tk.Frame(row, bg=R["bg"], width=icon_sz, height=icon_sz)
+                icon_frm = tk.Frame(row, bg=ibg, width=icon_sz, height=icon_sz)
                 icon_frm.pack_propagate(False)
                 icon_frm.pack(side="left", padx=(4, 2), pady=2)
                 icon_frm.bind("<Enter>", on_enter); icon_frm.bind("<Leave>", on_leave)
-                icon_lbl = tk.Label(icon_frm, bg=R["bg"])
+                icon_lbl = tk.Label(icon_frm, bg=ibg)
                 icon_lbl.pack(expand=True)
                 icon_lbl.bind("<Enter>", on_enter); icon_lbl.bind("<Leave>", on_leave)
                 _load_icon(icon_url, icon_lbl, gen, icon_sz)
