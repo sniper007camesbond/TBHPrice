@@ -642,7 +642,7 @@ def fetch_price_detail(hash_name):
     try:
         r = requests.get(
             f"https://steamcommunity.com/market/listings/{APP_ID}/{encoded}",
-            headers=HEADERS, timeout=10
+            headers=HEADERS, timeout=5
         )
         m = re.search(r'Market_LoadOrderSpread\(\s*(\d+)\s*\)', r.text)
         if m:
@@ -650,7 +650,7 @@ def fetch_price_detail(hash_name):
                 "https://steamcommunity.com/market/itemordershistogram",
                 params={"country": "US", "language": "english", "currency": 1,
                         "item_nameid": m.group(1), "two_factor": 0},
-                headers=HEADERS, timeout=10
+                headers=HEADERS, timeout=5
             )
             hdata = hr.json()
             graph = hdata.get("sell_order_graph", [])
@@ -671,7 +671,7 @@ def fetch_price_detail(hash_name):
         r2 = requests.get(
             f"https://steamcommunity.com/market/listings/{APP_ID}/{encoded}/render/",
             params={"start": 0, "count": 100, "currency": 1, "language": "english"},
-            headers=HEADERS, timeout=10
+            headers=HEADERS, timeout=5
         )
         data = r2.json()
         price_counts = {}
@@ -735,7 +735,11 @@ def _pd_open_variant(body, variant, pd_win):
     for w in body.winfo_children(): w.destroy()
     _pd_load_detail(body, variant, pd_win)
 
+_detail_gen = [0]
+
 def _pd_load_detail(body, variant, pd_win):
+    _detail_gen[0] += 1
+    gen = _detail_gen[0]
     lbl_loading = tk.Label(body, text="Yükleniyor...", bg=R["bg"], fg=R["muted"],
                            font=("Segoe UI", 9))
     lbl_loading.pack(pady=20)
@@ -743,58 +747,60 @@ def _pd_load_detail(body, variant, pd_win):
 
     def _fetch():
         rows, summary = fetch_price_detail(hash_name)
-        if _root:
+        if _root and gen == _detail_gen[0]:
             _root.after(0, lambda: _pd_render(body, lbl_loading, rows, summary, hash_name, pd_win))
 
     threading.Thread(target=_fetch, daemon=True).start()
 
 def _pd_render(body, lbl_loading, rows, summary, hash_name, pd_win):
+    try:
+        if not pd_win.winfo_exists(): return
+    except Exception:
+        return
     try: lbl_loading.destroy()
     except: pass
 
-    if rows is None:
-        tk.Label(body, text="Veri alınamadı.", bg=R["bg"], fg=R["kirmizi"],
-                 font=("Segoe UI", 9)).pack(pady=10)
-        tk.Button(body, text="Steam'de Aç", bg=R["yesil"], fg=R["bg"],
-                  font=("Segoe UI", 9, "bold"), relief="flat", bd=0,
-                  padx=16, pady=6, cursor="hand2",
-                  command=lambda: (webbrowser.open(steam_url(hash_name)), pd_win.destroy())
-                  ).pack(pady=8)
-        return
+    try:
+        if rows is None:
+            tk.Label(body, text="Veri alınamadı.", bg=R["bg"], fg=R["kirmizi"],
+                     font=("Segoe UI", 9)).pack(pady=10)
+            tk.Button(body, text="Steam'de Aç", bg=R["yesil"], fg=R["bg"],
+                      font=("Segoe UI", 9, "bold"), relief="flat", bd=0,
+                      padx=16, pady=6, cursor="hand2",
+                      command=lambda: (webbrowser.open(steam_url(hash_name)), pd_win.destroy())
+                      ).pack(pady=8)
+            return
 
-    # Özet satır
-    if summary:
-        tk.Label(body, text=summary, bg=R["bg"], fg=R["text"],
-                 font=("Segoe UI", 8), wraplength=230, justify="left").pack(anchor="w", pady=(0, 8))
+        if summary:
+            tk.Label(body, text=summary, bg=R["bg"], fg=R["text"],
+                     font=("Segoe UI", 8), wraplength=230, justify="left").pack(anchor="w", pady=(0, 8))
 
-    # Tablo başlığı
-    hdr = tk.Frame(body, bg=R["panel"])
-    hdr.pack(fill="x")
-    tk.Label(hdr, text="Fiyat", bg=R["panel"], fg=R["baslik"],
-             font=("Segoe UI", 8, "bold"), width=10, anchor="w", padx=6, pady=3).pack(side="left")
-    tk.Label(hdr, text="Miktar", bg=R["panel"], fg=R["baslik"],
-             font=("Segoe UI", 8, "bold"), width=10, anchor="e", padx=6, pady=3).pack(side="right")
-
-    # Veri satırları
-    for i, (price_str, qty_str) in enumerate(rows):
-        bg = R["sec"] if i % 2 == 0 else R["bg"]
-        row = tk.Frame(body, bg=bg)
-        row.pack(fill="x")
-        tk.Label(row, text=price_str, bg=bg, fg=R["text"],
-                 font=("Segoe UI", 8), width=10, anchor="w", padx=6, pady=3).pack(side="left")
-        tk.Label(row, text=qty_str, bg=bg, fg=R["yesil"],
+        hdr = tk.Frame(body, bg=R["panel"])
+        hdr.pack(fill="x")
+        tk.Label(hdr, text="Fiyat", bg=R["panel"], fg=R["baslik"],
+                 font=("Segoe UI", 8, "bold"), width=10, anchor="w", padx=6, pady=3).pack(side="left")
+        tk.Label(hdr, text="Miktar", bg=R["panel"], fg=R["baslik"],
                  font=("Segoe UI", 8, "bold"), width=10, anchor="e", padx=6, pady=3).pack(side="right")
 
-    # Satın Al butonu
-    tk.Button(body, text="Satın Al", bg=R["yesil"], fg=R["bg"],
-              font=("Segoe UI", 10, "bold"), relief="flat", bd=0,
-              padx=20, pady=7, cursor="hand2",
-              command=lambda: (webbrowser.open(steam_url(hash_name)), pd_win.destroy())
-              ).pack(pady=10)
+        for i, (price_str, qty_str) in enumerate(rows):
+            bg = R["sec"] if i % 2 == 0 else R["bg"]
+            row = tk.Frame(body, bg=bg)
+            row.pack(fill="x")
+            tk.Label(row, text=price_str, bg=bg, fg=R["text"],
+                     font=("Segoe UI", 8), width=10, anchor="w", padx=6, pady=3).pack(side="left")
+            tk.Label(row, text=qty_str, bg=bg, fg=R["yesil"],
+                     font=("Segoe UI", 8, "bold"), width=10, anchor="e", padx=6, pady=3).pack(side="right")
 
-    # Pencere boyutunu içeriğe göre yeniden ayarla
-    pd_win.update_idletasks()
-    pd_win.geometry(f"{pd_win.winfo_reqwidth()}x{pd_win.winfo_reqheight()}")
+        tk.Button(body, text="Satın Al", bg=R["yesil"], fg=R["bg"],
+                  font=("Segoe UI", 10, "bold"), relief="flat", bd=0,
+                  padx=20, pady=7, cursor="hand2",
+                  command=lambda: (webbrowser.open(steam_url(hash_name)), pd_win.destroy())
+                  ).pack(pady=10)
+
+        pd_win.update_idletasks()
+        pd_win.geometry(f"{pd_win.winfo_reqwidth()}x{pd_win.winfo_reqheight()}")
+    except Exception:
+        pass
 
 # ── Ana pencere ────────────────────────────────
 # ── Otomatik güncelleme ────────────────────────
