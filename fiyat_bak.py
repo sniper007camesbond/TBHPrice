@@ -236,25 +236,13 @@ def fetch_market():
     return grouped
 
 def load_market():
-    """Önce arsiv, sonra cache, en son Steam."""
-    # 1) Yerel cache taze mi?
+    """Steam cache tazeyse cache'den, değilse Steam'den çek. Arşivle karışmaz."""
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             c = json.load(f)
         if time.time() - c.get("updated", 0) < CACHE_TTL:
             status(t("cache_ok", n=len(c["grouped"])))
             return c["grouped"]
-
-    # 2) market_arsiv.json var mı?
-    g = _load_arsiv()
-    if g:
-        status(t("arsiv_ok", n=len(g)))
-        # cache olarak da kaydet
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump({"updated": time.time(), "grouped": g}, f, ensure_ascii=False)
-        return g
-
-    # 3) Son çare: Steam'den çek
     return fetch_market()
 
 # ── Yardimci ───────────────────────────────────
