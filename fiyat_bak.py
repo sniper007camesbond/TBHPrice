@@ -406,33 +406,31 @@ def open_search():
     grip.bind("<B1-Motion>",     rsz_move)
     grip.bind("<ButtonRelease-1>", rsz_end)
 
-    _rf = [None]
-    _sy = [0]
+    _rf        = [None]
+    _sy        = [0]
+    _content_h = [0]   # build_results'ta set edilir, scroll'da update_idletasks yok
 
     def _do_scroll(delta_units):
         if _rf[0] is None: return
-        _rf[0].update_idletasks()
-        content_h = _rf[0].winfo_reqheight()
-        clip_h    = max(clip.winfo_height(), 1)
-        max_y     = max(content_h - clip_h, 0)
-        _sy[0]    = max(0, min(_sy[0] + delta_units * 18, max_y))
+        ch  = _content_h[0]
+        clh = max(clip.winfo_height(), 1)
+        _sy[0] = max(0, min(_sy[0] + delta_units * 18, max(ch - clh, 0)))
         _rf[0].place(x=0, y=-_sy[0], relwidth=1)
-        if content_h > 0:
-            sb.set(_sy[0] / content_h, (_sy[0] + clip_h) / content_h)
+        if ch > 0:
+            sb.set(_sy[0] / ch, (_sy[0] + clh) / ch)
 
     def _sb_cmd(*args):
         if _rf[0] is None: return
-        _rf[0].update_idletasks()
-        content_h = _rf[0].winfo_reqheight()
-        clip_h    = max(clip.winfo_height(), 1)
+        ch  = _content_h[0]
+        clh = max(clip.winfo_height(), 1)
         if args[0] == "moveto":
-            _sy[0] = int(float(args[1]) * content_h)
+            _sy[0] = int(float(args[1]) * ch)
         elif args[0] == "scroll":
             _sy[0] += int(args[1]) * 18
-        _sy[0] = max(0, min(_sy[0], max(content_h - clip_h, 0)))
+        _sy[0] = max(0, min(_sy[0], max(ch - clh, 0)))
         _rf[0].place(x=0, y=-_sy[0], relwidth=1)
-        if content_h > 0:
-            sb.set(_sy[0] / content_h, (_sy[0] + clip_h) / content_h)
+        if ch > 0:
+            sb.set(_sy[0] / ch, (_sy[0] + clh) / ch)
 
     sb.config(command=_sb_cmd)
     sw.bind_all("<MouseWheel>", lambda e: _do_scroll(-int(e.delta / 120)))
@@ -446,8 +444,7 @@ def open_search():
         _build_gen[0] += 1
         gen = _build_gen[0]
 
-        # Ölçek hesapla
-        sw.update_idletasks()
+        # Ölçek hesapla (update_idletasks yok — pencere zaten render olmuş)
         cw = clip.winfo_width()
         sc = max(1.0, cw / BASE_W) if cw > 50 else 1.0
         icon_sz  = max(32, int(40 * sc))
@@ -533,12 +530,12 @@ def open_search():
                      fg=R["muted"], font=fn_info, pady=10).pack()
 
         rf.update_idletasks()
-        content_h = rf.winfo_reqheight()
-        clip_h    = max(clip.winfo_height(), 1)
-        if content_h > 0:
-            sb.set(0, min(1.0, clip_h / content_h))
+        _content_h[0] = rf.winfo_reqheight()
+        clip_h = max(clip.winfo_height(), 1)
+        if _content_h[0] > 0:
+            sb.set(0, min(1.0, clip_h / _content_h[0]))
 
-    build_results()
+    sw.after(30, build_results)   # pencere render olduktan sonra listele
 
     _after = [None]
     def on_type(*_):
