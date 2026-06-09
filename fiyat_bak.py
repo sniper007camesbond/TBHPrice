@@ -296,14 +296,8 @@ _img_pil   = {}   # icon_url → PIL.Image (ham, boyutsuz)
 _img_photo = {}   # (icon_url, size) → ImageTk.PhotoImage
 _build_gen = [0]
 
-def _load_icon(icon_url, label, gen, size=40):
-    if not icon_url:
-        return
-    cache_key = (icon_url, size)
-    if cache_key in _img_photo:
-        photo = _img_photo[cache_key]
-        label.config(image=photo); label.image = photo
-        return
+def _fetch_pil(icon_url, callback, gen, size):
+    """Arka planda PIL indir, main thread'de callback çağır."""
     def _worker():
         try:
             if icon_url not in _img_pil:
@@ -311,24 +305,36 @@ def _load_icon(icon_url, label, gen, size=40):
                 r = requests.get(url, timeout=6, headers=HEADERS)
                 _img_pil[icon_url] = Image.open(io.BytesIO(r.content)).convert("RGBA")
             if _root and gen == _build_gen[0]:
-                _root.after(0, lambda: _apply_icon(label, icon_url, gen, size))
+                _root.after(0, lambda: callback(icon_url, gen, size))
         except Exception:
             pass
     threading.Thread(target=_worker, daemon=True).start()
 
-def _apply_icon(label, icon_url, gen, size):
-    if gen != _build_gen[0]:
+def _get_photo(icon_url, size):
+    """PhotoImage döner; yoksa None."""
+    key = (icon_url, size)
+    if key not in _img_photo:
+        pil = _img_pil.get(icon_url)
+        if pil is None:
+            return None
+        _img_photo[key] = ImageTk.PhotoImage(pil.resize((size, size), Image.LANCZOS))
+    return _img_photo[(icon_url, size)]
+
+def _load_icon_canvas(icon_url, canvas, item_id, gen, size):
+    """Canvas image item'ını async yükle."""
+    if not icon_url: return
+    photo = _get_photo(icon_url, size)
+    if photo:
+        try: canvas.itemconfig(item_id, image=photo)
+        except: pass
         return
-    try:
-        cache_key = (icon_url, size)
-        if cache_key not in _img_photo:
-            pil = _img_pil.get(icon_url)
-            if pil is None: return
-            _img_photo[cache_key] = ImageTk.PhotoImage(pil.resize((size, size), Image.LANCZOS))
-        photo = _img_photo[cache_key]
-        label.config(image=photo); label.image = photo
-    except Exception:
-        pass
+    def _cb(url, g, sz):
+        if g != _build_gen[0]: return
+        try:
+            p = _get_photo(url, sz)
+            if p: canvas.itemconfig(item_id, image=p)
+        except: pass
+    _fetch_pil(icon_url, _cb, gen, size)
 
 # ── Arama popup'i ──────────────────────────────
 _search_win = None
@@ -383,8 +389,9 @@ def open_search():
     entry.pack(fill="x", ipady=5, padx=2)
     entry.focus_set()
 
-    # Sonuc listesi — place tabanlı scroll, yeniden boyutlandırılabilir
-    BASE_W = 380
+    # Sonuc listesi — Canvas tabanlı (hızlı), yeniden boyutlandırılabilir
+    BASE_W  = 380
+    ROW_H_B = 54
 
     list_frame = tk.Frame(inner, bg=R["bg"])
     list_frame.pack(fill="both", expand=True, padx=8, pady=(0, 0))
@@ -392,9 +399,11 @@ def open_search():
     sb = tk.Scrollbar(list_frame, orient="vertical")
     sb.pack(side="right", fill="y")
 
-    clip = tk.Frame(list_frame, bg=R["bg"])
-    clip.pack(side="left", fill="both", expand=True)
-    clip.pack_propagate(False)
+    cv = tk.Canvas(list_frame, bg=R["bg"], highlightthickness=0,
+                   yscrollcommand=sb.set, yscrollincrement=4)
+    cv.pack(side="left", fill="both", expand=True)
+    sb.config(command=cv.yview)
+    sw.bind_all("<MouseWheel>", lambda e: cv.yview_scroll(int(-1*(e.delta/120)), "units"))
 
     # Yeniden boyutlandırma tutamacı
     grip = tk.Frame(inner, bg=R["border"], height=8, cursor="size_nw_se")
@@ -413,135 +422,108 @@ def open_search():
     grip.bind("<B1-Motion>",     rsz_move)
     grip.bind("<ButtonRelease-1>", rsz_end)
 
-    _rf        = [None]
-    _sy        = [0]
-    _content_h = [0]   # build_results'ta set edilir, scroll'da update_idletasks yok
+    _row_rects   = {}
+    _row_actions = {}
+    _hovered     = [-1]
+    _cur_row_h   = [ROW_H_B]
 
-    def _do_scroll(delta_units):
-        if _rf[0] is None: return
-        ch  = _content_h[0]
-        clh = max(clip.winfo_height(), 1)
-        _sy[0] = max(0, min(_sy[0] + delta_units * 18, max(ch - clh, 0)))
-        _rf[0].place(x=0, y=-_sy[0], relwidth=1)
-        if ch > 0:
-            sb.set(_sy[0] / ch, (_sy[0] + clh) / ch)
+    def _on_motion(e):
+        y   = cv.canvasy(e.y)
+        idx = int(y // _cur_row_h[0])
+        if idx == _hovered[0]: return
+        if _hovered[0] in _row_rects:
+            cv.itemconfig(_row_rects[_hovered[0]], fill=R["bg"])
+        _hovered[0] = idx
+        if idx in _row_rects:
+            cv.itemconfig(_row_rects[idx], fill=R["sec"])
 
-    def _sb_cmd(*args):
-        if _rf[0] is None: return
-        ch  = _content_h[0]
-        clh = max(clip.winfo_height(), 1)
-        if args[0] == "moveto":
-            _sy[0] = int(float(args[1]) * ch)
-        elif args[0] == "scroll":
-            _sy[0] += int(args[1]) * 18
-        _sy[0] = max(0, min(_sy[0], max(ch - clh, 0)))
-        _rf[0].place(x=0, y=-_sy[0], relwidth=1)
-        if ch > 0:
-            sb.set(_sy[0] / ch, (_sy[0] + clh) / ch)
+    def _on_click(e):
+        idx = int(cv.canvasy(e.y) // _cur_row_h[0])
+        fn  = _row_actions.get(idx)
+        if fn: fn()
 
-    sb.config(command=_sb_cmd)
-    sw.bind_all("<MouseWheel>", lambda e: _do_scroll(-int(e.delta / 120)))
+    cv.bind("<Motion>",   _on_motion)
+    cv.bind("<Button-1>", _on_click)
 
     def build_results(q=""):
-        if _rf[0]:
-            try: _rf[0].destroy()
-            except: pass
-        _sy[0] = 0
-        sb.set(0, 1)
+        cv.delete("all")
+        _row_rects.clear(); _row_actions.clear(); _hovered[0] = -1
         _build_gen[0] += 1
         gen = _build_gen[0]
 
-        # Ölçek hesapla (update_idletasks yok — pencere zaten render olmuş)
-        cw = clip.winfo_width()
-        sc = max(1.0, cw / BASE_W) if cw > 50 else 1.0
-        icon_sz  = max(32, int(40 * sc))
+        cw  = cv.winfo_width() or BASE_W
+        sc  = max(1.0, cw / BASE_W) if cw > 50 else 1.0
+        rh  = max(48, int(ROW_H_B * sc))
+        isz = max(32, int(38 * sc))
+        _cur_row_h[0] = rh
         fn_name  = ("Segoe UI", max(9,  int(9  * sc)), "bold")
         fn_info  = ("Segoe UI", max(7,  int(7  * sc)))
         fn_price = ("Segoe UI", max(10, int(10 * sc)), "bold")
-        pad_x    = max(8, int(8 * sc))
 
-        rf = tk.Frame(clip, bg=R["bg"])
-        rf.place(x=0, y=0, relwidth=1)
-        _rf[0] = rf
+        q_low    = q.lower()
+        filtered = []
+        for name, variants in _sorted_items:
+            if q_low and q_low not in name.lower(): continue
+            filtered.append((name, variants))
+            if len(filtered) >= 60: break
 
-        q_low = q.lower()
-        shown = 0
-        for name, variants in sorted(_grouped.items()):
-            if q_low and q_low not in name.lower():
-                continue
-            if shown >= 60:
-                break
-            shown += 1
+        total_h = len(filtered) * rh
+        cv.configure(scrollregion=(0, 0, cw, max(total_h, 1)))
+
+        for i, (name, variants) in enumerate(filtered):
+            y    = i * rh
+            ibg  = _rarity_bg(variants)
+            ifg  = _rarity_fg(variants)
             prices   = [v["price"] for v in variants if v["price"] > 0]
             p_min    = min(prices) if prices else 0
             p_max    = max(prices) if prices else 0
             n_var    = len(variants)
             listings = sum(v["listings"] for v in variants)
 
-            row = tk.Frame(rf, bg=R["bg"], cursor="hand2")
-            row.pack(fill="x", pady=1)
-            def on_enter(e, r=row): r.config(bg=R["sec"])
-            def on_leave(e, r=row): r.config(bg=R["bg"])
-            row.bind("<Enter>", on_enter)
-            row.bind("<Leave>", on_leave)
+            rect_id = cv.create_rectangle(0, y, cw, y+rh-1,
+                                           fill=R["bg"], outline="")
+            _row_rects[i] = rect_id
 
-            # İkon (rarity arka plan rengi ile)
+            ix = 4
+            cv.create_rectangle(ix, y+3, ix+isz, y+3+isz,
+                                 fill=ibg, outline="")
+
             icon_url = variants[0].get("icon_url", "")
-            ibg = _rarity_bg(variants)
             if icon_url:
-                icon_frm = tk.Frame(row, bg=ibg, width=icon_sz, height=icon_sz)
-                icon_frm.pack_propagate(False)
-                icon_frm.pack(side="left", padx=(4, 2), pady=2)
-                icon_frm.bind("<Enter>", on_enter); icon_frm.bind("<Leave>", on_leave)
-                icon_lbl = tk.Label(icon_frm, bg=ibg)
-                icon_lbl.pack(expand=True)
-                icon_lbl.bind("<Enter>", on_enter); icon_lbl.bind("<Leave>", on_leave)
-                _load_icon(icon_url, icon_lbl, gen, icon_sz)
+                img_id = cv.create_image(ix + isz//2, y + rh//2, anchor="center")
+                _load_icon_canvas(icon_url, cv, img_id, gen, isz)
 
-            left = tk.Frame(row, bg=R["bg"])
-            left.pack(side="left", fill="x", expand=True, padx=(4, 0), pady=3)
-            left.bind("<Enter>", on_enter); left.bind("<Leave>", on_leave)
-
-            tk.Label(left, text=name, bg=R["bg"], fg=_rarity_fg(variants),
-                     font=fn_name, anchor="w").pack(fill="x")
+            tx = ix + isz + 8
+            cv.create_text(tx, y + 6, text=name, fill=ifg,
+                           font=fn_name, anchor="nw")
 
             info = f"{listings:,} {t('listings')}"
-            if n_var > 1:
-                info += f"  •  {n_var} {t('variant')}"
-            tk.Label(left, text=info, bg=R["bg"], fg=R["muted"],
-                     font=fn_info, anchor="w").pack(fill="x")
+            if n_var > 1: info += f"  •  {n_var} {t('variant')}"
+            cv.create_text(tx, y + 6 + fn_name[1] + 6, text=info,
+                           fill=R["muted"], font=fn_info, anchor="nw")
 
             sv = sorted(variants, key=lambda x: x.get("price", 0))
             pt_min = sv[0].get("price_text") or fmt_price(p_min)
             pt_max = sv[-1].get("price_text") or fmt_price(p_max)
             price_str = pt_min if pt_min == pt_max else f"{pt_min} ~ {pt_max}"
+            cv.create_text(cw - 6, y + rh//2, text=price_str,
+                           fill=R["yesil"], font=fn_price, anchor="e")
 
-            price_lbl = tk.Label(row, text=price_str, bg=R["bg"], fg=R["yesil"],
-                                 font=fn_price, padx=pad_x)
-            price_lbl.pack(side="right")
+            cv.create_line(0, y+rh-1, cw, y+rh-1, fill=R["border"])
 
-            def open_item(n=name, vs=variants):
-                if len(vs) == 1:
-                    webbrowser.open(steam_url(vs[0]["hash_name"]))
-                else:
-                    webbrowser.open(steam_search_url(n))
-                close_search(sw)
+            def _make_action(n=name, vs=variants):
+                def _fn():
+                    if len(vs) == 1:
+                        webbrowser.open(steam_url(vs[0]["hash_name"]))
+                    else:
+                        webbrowser.open(steam_search_url(n))
+                    close_search(sw)
+                return _fn
+            _row_actions[i] = _make_action()
 
-            for widget in [row, left]:
-                widget.bind("<Button-1>", lambda e, fn=open_item: fn())
-
-            sep = tk.Frame(rf, bg=R["border"], height=1)
-            sep.pack(fill="x")
-
-        if shown == 0 and q:
-            tk.Label(rf, text=t("no_match"), bg=R["bg"],
-                     fg=R["muted"], font=fn_info, pady=10).pack()
-
-        rf.update_idletasks()
-        _content_h[0] = rf.winfo_reqheight()
-        clip_h = max(clip.winfo_height(), 1)
-        if _content_h[0] > 0:
-            sb.set(0, min(1.0, clip_h / _content_h[0]))
+        if not filtered and q_low:
+            cv.create_text(cw//2, 30, text=t("no_match"),
+                           fill=R["muted"], font=fn_info, anchor="center")
 
     sw.after(30, build_results)   # pencere render olduktan sonra listele
 
@@ -605,7 +587,12 @@ _root          = None
 _ready_frame   = None
 _loading_frame = None
 _grouped       = {}
+_sorted_items  = []   # pre-sorted list of (name, variants)
 _ui            = {}   # widget refs for live lang update
+
+def _presort():
+    global _sorted_items
+    _sorted_items = sorted(_grouped.items())
 
 def toggle_lang():
     _lang[0] = "en" if _lang[0] == "tr" else "tr"
@@ -709,12 +696,14 @@ def refresh():
     if _loading_frame: _loading_frame.pack(fill="x", padx=20, pady=(0, 12))
     if _root:          _root.geometry("340x155")
     _grouped = fetch_market()
+    _presort()
     status(t("ready"))
     if _root: _root.after(0, show_ready)
 
 def init():
     global _grouped
     _grouped = load_market()
+    _presort()
     status(t("ready"))
     if _root: _root.after(0, show_ready)
 
