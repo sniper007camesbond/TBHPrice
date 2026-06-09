@@ -315,19 +315,19 @@ def _save_pil_to_disk(icon_url, img):
     except Exception:
         pass
 
+_img_waiters = {}  # icon_url → [(callback, gen, size), ...]
+
 def _get_photo(icon_url, size):
-    """RAM cache'den PhotoImage döner; yoksa None."""
     return _img_photo.get((icon_url, size))
 
 def _fetch_and_cache(icon_url, callback, gen, size):
-    """
-    Worker (thread pool): disk → Steam CDN sırasıyla dene.
-    Resize + PhotoImage oluşturma da burada (main thread yük almaz).
-    Hazır olunca main thread'de canvas güncelle.
-    """
+    """disk → Steam CDN, max 4 eşzamanlı. Aynı URL için birden fazla waiter destekler."""
     if icon_url in _img_pending:
+        _img_waiters.setdefault(icon_url, []).append((callback, gen, size))
         return
     _img_pending.add(icon_url)
+    _img_waiters[icon_url] = [(callback, gen, size)]
+
     def _worker():
         pil = None
         try:
@@ -337,29 +337,42 @@ def _fetch_and_cache(icon_url, callback, gen, size):
                 r = requests.get(url, timeout=6, headers=HEADERS)
                 pil = Image.open(io.BytesIO(r.content)).convert("RGBA")
                 _save_pil_to_disk(icon_url, pil)
-            # Resize burada (worker thread) — main thread'e yük yok
-            key = (icon_url, size)
-            if key not in _img_photo:
-                resized = pil.resize((size, size), Image.LANCZOS)
-                # ImageTk.PhotoImage main thread'de oluşturulmalı
-                if _root and gen == _build_gen[0]:
-                    _root.after(0, lambda p=resized: _make_photo_and_cb(icon_url, size, p, callback, gen))
         except Exception:
-            pass
+            pil = None
         finally:
             _img_pending.discard(icon_url)
-    _icon_pool.submit(_worker)
 
-def _make_photo_and_cb(icon_url, size, resized_pil, callback, gen):
-    """Main thread'de PhotoImage oluştur, callback çağır."""
-    if gen != _build_gen[0]: return
-    key = (icon_url, size)
-    if key not in _img_photo:
-        try:
-            _img_photo[key] = ImageTk.PhotoImage(resized_pil)
-        except Exception:
+        waiters = _img_waiters.pop(icon_url, [])
+        if pil is None or not _root:
             return
-    callback(icon_url, gen, size)
+
+        # Her boyut için bir kez resize et
+        sizes_needed = list({sz for _, _, sz in waiters})
+        resized = {}
+        for sz in sizes_needed:
+            try:
+                resized[sz] = pil.resize((sz, sz), Image.LANCZOS)
+            except Exception:
+                pass
+
+        def _on_main():
+            for sz, rpil in resized.items():
+                key = (icon_url, sz)
+                if key not in _img_photo:
+                    try:
+                        _img_photo[key] = ImageTk.PhotoImage(rpil)
+                    except Exception:
+                        pass
+            for cb, g, sz in waiters:
+                if g != _build_gen[0]: continue
+                p = _img_photo.get((icon_url, sz))
+                if p:
+                    try: cb(p)
+                    except: pass
+
+        _root.after(0, _on_main)
+
+    _icon_pool.submit(_worker)
 
 def _load_icon_canvas(icon_url, canvas, item_id, gen, size):
     """Canvas image item'ını async yükle."""
@@ -369,11 +382,8 @@ def _load_icon_canvas(icon_url, canvas, item_id, gen, size):
         try: canvas.itemconfig(item_id, image=photo)
         except: pass
         return
-    def _cb(url, g, sz):
-        if g != _build_gen[0]: return
-        try:
-            p = _get_photo(url, sz)
-            if p: canvas.itemconfig(item_id, image=p)
+    def _cb(p):
+        try: canvas.itemconfig(item_id, image=p)
         except: pass
     _fetch_and_cache(icon_url, _cb, gen, size)
 
