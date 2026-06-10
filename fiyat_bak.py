@@ -60,6 +60,8 @@ LANG = {
         "steam_err":    "Steam hatasi: {e} — arsiv kullaniliyor.",
         "steam_fail":   "Steam'e erisilemedi — arsiv kullaniliyor.",
         "fetching1":    "Steam'den fiyatlar cekiliyor (1. sayfa)...",
+        "skip_fetch":   "Arsivden Devam Et",
+        "using_arsiv":  "Arsiv verisi yukleniyor...",
     },
     "en": {
         "win_title":    "TBH PRICE CHECKER",
@@ -91,6 +93,8 @@ LANG = {
         "steam_err":    "Steam error: {e} — using archive.",
         "steam_fail":   "Steam unavailable — using archive.",
         "fetching1":    "Fetching prices from Steam (page 1)...",
+        "skip_fetch":   "Use Archive Instead",
+        "using_arsiv":  "Loading archive data...",
     },
 }
 
@@ -201,10 +205,16 @@ def _load_arsiv():
         grouped[n].sort(key=lambda x: x.get("price", 0))
     return grouped
 
+_fetch_cancel = [False]
+
 def fetch_market():
-    """Steam'den güncel fiyat çek — sıralı, 1.2s bekleme, ban riski yok."""
+    """Steam'den güncel fiyat çek — sıralı, 0.3s bekleme, ban riski yok."""
+    _fetch_cancel[0] = False
     status(t("fetching1"))
     set_progress(-1)
+
+    if _fetch_cancel[0]:
+        return _load_arsiv() or {}
 
     try:
         first, total = _fetch_page(0)
@@ -212,8 +222,9 @@ def fetch_market():
         status(t("steam_err", e=e))
         return _load_arsiv() or {}
 
-    if not first:
-        status(t("steam_fail"))
+    if _fetch_cancel[0] or not first:
+        if not first:
+            status(t("steam_fail"))
         return _load_arsiv() or {}
 
     page_size = len(first)
@@ -222,7 +233,11 @@ def fetch_market():
     total_pg  = len(offsets) + 1
 
     for i, off in enumerate(offsets):
+        if _fetch_cancel[0]:
+            return _load_arsiv() or {}
         time.sleep(0.3)
+        if _fetch_cancel[0]:
+            return _load_arsiv() or {}
         items, _ = _fetch_page(off)
         all_items.extend(items)
         status(t("fetching", n=i+2, total=total_pg))
@@ -1184,6 +1199,14 @@ def build_window():
     pb.start(15)
     _progress_bar = pb
 
+    skip_btn = tk.Button(lf, text=t("skip_fetch"), bg=R["btn"], fg=R["muted"],
+                         font=("Segoe UI", 8), relief="flat", padx=8, pady=3,
+                         cursor="hand2",
+                         command=lambda: [_fetch_cancel.__setitem__(0, True),
+                                          status(t("using_arsiv"))])
+    skip_btn.pack(pady=(6, 0))
+    _ui["skip_fetch"] = skip_btn
+
     # Ready frame (gizli)
     rf = tk.Frame(root, bg=R["bg"])
     _ready_frame = rf
@@ -1223,7 +1246,7 @@ def build_window():
     close_btn.pack(side="left", padx=4)
     _ui["close_btn"] = close_btn
 
-    root.geometry("340x170")
+    root.geometry("340x195")
     _root = root
     return root
 
@@ -1234,9 +1257,10 @@ def show_ready():
 
 def refresh():
     global _grouped
+    _fetch_cancel[0] = False
     if _ready_frame:   _ready_frame.pack_forget()
     if _loading_frame: _loading_frame.pack(fill="x", padx=20, pady=(0, 12))
-    if _root:          _root.geometry("340x155")
+    if _root:          _root.geometry("340x180")
     _grouped = fetch_market()
     _presort()
     _presort_arsiv()
